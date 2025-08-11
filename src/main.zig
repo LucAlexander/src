@@ -280,6 +280,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 	}
 	try skip_whitespace(tokens, token_index);
 	std.debug.assert(tokens[token_index.*].tag == .OPEN_BRACE);
+	token_index.* += 1;
 	var depth: u64 = 0;
 	while (token_index.* < tokens.len){
 		if (tokens[token_index.*].tag == .CLOSE_BRACE){
@@ -320,6 +321,7 @@ pub fn skip_whitespace(tokens: []Token, token_index: *u64) !void {
 		}
 		return;
 	}
+	token_index.*-=1;
 	return ParseError.UnexpectedEOF;
 }
 
@@ -353,6 +355,7 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 	token_index.* += 1;
 	if (token_index.* == tokens.len){
 		std.debug.print("Found end of file in the middle of a pattern definition\n", .{});
+		token_index.*-=1;
 		return ParseError.UnexpectedEOF;
 	}
 	if (tokens[token_index.*].tag != .IDENTIFIER){
@@ -363,6 +366,7 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 	token_index.* += 1;
 	if (token_index.* == tokens.len){
 		std.debug.print("Found end of file in the middle of a pattern definition, expected either : pattern scheme or expansion\n", .{});
+		token_index.*-=1;
 		return ParseError.UnexpectedEOF;
 	}
 	if (tokens[token_index.*].tag != .IS_OF){
@@ -372,6 +376,7 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 	token_index.* += 1;
 	if (token_index.* == tokens.len){
 		std.debug.print("Found end of file in the middle of a pattern definition, expected pattern scheme following :\n", .{});
+		token_index.*-=1;
 		return ParseError.UnexpectedEOF;
 	}
 	arg.pattern = try parse_pattern(mem, tokens, token_index);
@@ -387,6 +392,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 		try skip_whitespace(tokens, token_index);
 		if (token_index.* == tokens.len){
 			std.debug.print("Found end of file in the middle of a pattern definition\n", .{});
+			token_index.*-=1;
 			return ParseError.UnexpectedEOF;
 		}
 		while (token_index.* < tokens.len){
@@ -439,6 +445,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 		std.debug.print("Expected elipses ... for grouping expression, found {s}\n", .{tokens[token_index.*].text});
 		return ParseError.UnexpectedToken;
 	}
+	token_index.* += 1;
 	const close_loc = mem.create(Arg)
 		catch unreachable;
 	close_loc.* = try parse_arg(mem, tokens, token_index);
