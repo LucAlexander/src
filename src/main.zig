@@ -269,7 +269,6 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 	else if (tokens[token_index.*].tag == .BIND_PATTERN){
 		bind.tag = .pattern;
 	}
-	//TODO parse precedence
 	token_index.* += 1;
 	try skip_whitespace(tokens, token_index);
 	const precedence = tokens[token_index.*];
@@ -405,8 +404,10 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 			token_index.*-=1;
 			return ParseError.UnexpectedEOF;
 		}
-		while (token_index.* < tokens.len){
+		blk: while (token_index.* < tokens.len){
 			if (tokens[token_index.*].tag == .CLOSE_BRACK){
+				token_index.* += 1;
+				try skip_whitespace(tokens, token_index);
 				break;
 			}
 			var list = Buffer(*Arg).init(mem.*);
@@ -416,17 +417,26 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 				loc.* = try parse_arg(mem, tokens, token_index);
 				list.append(loc)
 					catch unreachable;
+				try skip_whitespace(tokens, token_index);
 				if (tokens[token_index.*].tag == .ALTERNATE){
+					token_index.* += 1;
+					try skip_whitespace(tokens, token_index);
 					break;
+				}
+				if (tokens[token_index.*].tag == .CLOSE_BRACK){
+					token_index.* += 1;
+					try skip_whitespace(tokens, token_index);
+					break :blk;
 				}
 			}
 			pattern.alternate.append(list)
 				catch unreachable;
 		}
-		token_index.* += 1;
 		return pattern;
 	}
 	if (tokens[token_index.*].tag == .OPEN_BRACE){
+		token_index.* += 1;
+		try skip_whitespace(tokens, token_index);
 		var pattern = Pattern{
 			.variadic=.{
 				.members = Buffer(*Arg).init(mem.*),
@@ -439,12 +449,14 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 			loc.* = try parse_arg(mem, tokens, token_index);
 			pattern.variadic.members.append(loc)
 				catch unreachable;
+			try skip_whitespace(tokens, token_index);
 			if (tokens[token_index.*].tag == .CLOSE_BRACE){
 				pattern.variadic.separator = pattern.variadic.members.pop();
+				token_index.* += 1;
+				try skip_whitespace(tokens, token_index);
 				break;
 			}
 		}
-		token_index.* += 1;
 		std.debug.assert(pattern.variadic.separator != null);
 		return pattern;
 	}
@@ -535,6 +547,7 @@ pub fn show_arg(arg: Arg) void {
 			show_arg(arg.pattern.group.close.*);
 		},
 		.variadic => {
+			std.debug.print("VARIADIC_OPEN\n", .{});
 			for (arg.pattern.variadic.members.items) |positional| {
 				show_arg(positional.*);
 				std.debug.print("\n", .{});
@@ -545,6 +558,7 @@ pub fn show_arg(arg: Arg) void {
 			else{
 				std.debug.assert(false);
 			}
+			std.debug.print("VARIADIC_CLOSE", .{});
 		}
 	}
 }
