@@ -150,9 +150,14 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	var tokens = Buffer(Token).init(mem.*);
 	while (i<text.len){
 		var escape = false;
-		const c = text[i];
+		var c = text[i];
 		if (c == '\\'){
 			escape = true;
+			i += 1;
+			if (i == text.len){
+				break;
+			}
+			c = text[i];
 		}
 		var tag:TOKEN = blk:{
 			switch (c) {
@@ -193,7 +198,9 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				}
 				break :blk text[i..i+size];
 			}
-			while (i+size < text.len or (!std.ascii.isWhitespace(text[i+size]) and !std.ascii.isAlphanumeric(text[i+size]))){
+			while (i+size < text.len and (!std.ascii.isWhitespace(text[i+size])
+				                     and !std.ascii.isAlphanumeric(text[i+size])
+									 and text[i+size] != '\\')){
 				size += 1;
 			}
 			break :blk text[i..i+size];
@@ -204,7 +211,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				tag = .IDENTIFIER;
 			}
 		}
-		tokens.append(Token{.tag=.IDENTIFIER, .text=keyword})
+		tokens.append(Token{.tag=tag, .text=keyword})
 			catch unreachable;
 		i += size;
 	}
@@ -213,7 +220,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 
 pub fn show_tokens(tokens: Buffer(Token)) void {
 	for (tokens.items) |*token| {
-		std.debug.print("{}:{s} ", .{token.tag, token.text});
+		std.debug.print("{} {s}\n", .{token.tag, token.text});
 	}
 	std.debug.print("\n", .{});
 }
@@ -266,7 +273,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 		const old = i;
 		bind.args.append(try parse_arg(mem, tokens[i..], &i))
 			catch unreachable;
-		token_index.* += old-i;
+		token_index.* += i-old;
 	}
 	std.debug.assert(tokens[i].tag == .OPEN_BRACE);
 	var depth: u64 = 0;
@@ -342,7 +349,7 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 	}
 	const old = i;
 	arg.pattern = try parse_pattern(mem, tokens[i..], &i);
-	token_index.* += old-i;
+	token_index.* += i-old;
 	return arg;
 }
 
@@ -367,7 +374,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 				const loc = mem.create(Arg)
 					catch unreachable;
 				loc.* = try parse_arg(mem, tokens[i..], &i);
-				token_index.* += old-i;
+				token_index.* += i-old;
 				list.append(loc)
 					catch unreachable;
 				if (tokens[i].tag == .ALTERNATE){
@@ -377,6 +384,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 			pattern.alternate.append(list)
 				catch unreachable;
 		}
+		token_index.* += 1;
 		return pattern;
 	}
 	if (tokens[i].tag == .OPEN_BRACE){
@@ -399,6 +407,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 				break;
 			}
 		}
+		token_index.* += 1;
 		std.debug.assert(pattern.variadic.separator != null);
 		return pattern;
 	}
@@ -406,7 +415,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 		catch unreachable;
 	var old = i;
 	open_loc.* = try parse_arg(mem, tokens[i..], &i);
-	token_index.* += old-i;
+	token_index.* += i-old;
 	if (tokens[i].tag != .ELIPSES){
 		return ParseError.UnexpectedToken;
 	}
@@ -414,7 +423,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 		catch unreachable;
 	old = i;
 	close_loc.* = try parse_arg(mem, tokens[i..], &i);
-	token_index.* += old-i;
+	token_index.* += i-old;
 	return Pattern{
 		.group = .{
 			.open=open_loc,
