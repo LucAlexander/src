@@ -9,11 +9,45 @@ pub fn main() !void {
 	const contents = try infile.readToEndAlloc(allocator, stat.size+1);
 	defer allocator.free(contents);
 	var main_mem = std.heap.ArenaAllocator.init(allocator);
+	var main_aux = std.heap.ArenaAllocator.init(allocator);
+	var main_txt = std.heap.ArenaAllocator.init(allocator);
 	defer main_mem.deinit();
 	const mem = main_mem.allocator();
+	const txt = main_txt.allocator();
+	const aux = main_aux.allocator();
 	const tokens = tokenize(&mem, contents);
 	show_tokens(tokens);
+	var text = Buffer(Token).init(txt);
+	var auxil = Buffer(Token).init(aux);
+	var program = ProgramText{
+		.text=&text,
+		.binds=Buffer(Bind).init(mem)
+	};
+	var token_stream = &tokens;
+	var done = false;
+	while (!done){
+		program.text=&text;
+		text.clearRetainingCapacity();
+		done = parse(&mem, token_stream, &program) catch {
+			//TODO error report
+		};
+		token_stream = program.text;
+		if (done){
+			break;
+		}
+		program.text=&auxil;
+		auxil.clearRetainingCapacity();
+		done = parse(&mem, tokens, &program) catch {
+			//TODO error report
+		};
+		token_stream = program.auxil;
+	}
 }
+
+const ParseError = error {
+	PrematureEnd,
+	UnexpectedToken
+};
 
 const TOKEN = enum {
 	BIND, BIND_COMP, BIND_PATTERN,
@@ -46,7 +80,7 @@ const Token = struct {
 
 const Arg = struct {
 	tag: enum {
-		inclusion, exclusion
+		inclusion, exclusion, optional
 	},
 	name: Token,
 	pattern: Pattern
@@ -75,11 +109,11 @@ const Bind = struct {
 	},
 	precedence: u8,
 	args: Buffer(Arg),
-	text: []Token
+	text: Buffer(Token)
 };
 
 const ProgramText = struct {
-	text: []Token,
+	text: *Buffer(Token),
 	binds: Buffer(Bind)
 };
 
@@ -180,4 +214,119 @@ pub fn show_tokens(tokens: Buffer(Token)) void {
 		std.debug.print("{}:{s} ", .{token.tag, token.text});
 	}
 	std.debug.print("\n", .{});
+}
+
+pub fn parse(mem: *const std.mem.Allocator, tokens: Buffer(Token), program: *ProgramText) !bool {
+	var done = true;
+	var token_index:u64 = 0;
+	while (token_index < tokens.items.len){
+		const token = &tokens.items[token_index];
+		if (token.tag != .BIND and
+			token.tag != .BIND_COMP and
+			token.tag != .BIND_PATTERN){
+			program.text.append(token.*)
+				catch unreachable;
+			token_index += 1;
+			continue;
+		}
+		done = false;
+		program.binds.append(try parse_bind(mem, tokens.items[token_index..], &token_index))
+			catch unreachable;
+	}
+	return done;
+}
+
+pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) !Bind {
+	std.debug.assert(
+		tokens[0].tag == .BIND or
+		tokens[0].tag == .BIND_COMP or
+		tokens[0].tag == .BIND_PATTERN
+	);
+	var bind = Bind{
+		.tag = tokens[0].tag,
+		.precedence=0,
+		.args=Buffer(Arg).init(mem.*),
+		.text=Buffer(Token).init(mem*)
+	};
+	var i:u64 = 2;
+	while (i < tokens.len){
+		const token = &tokens[i];
+		if (token.tag == .OPEN_BRACE){
+			break;
+		}
+		const old = i;
+		bind.args.append(try parse_arg(mem, tokens[i..], &i))
+			catch unreachable;
+		token_index.* += old-i;
+	}
+	std.debug.assert(tokens[i].tag == .OPEN_BRACE);
+	var depth: u64 = 0;
+	while (i < tokens.len){
+		if (tokens[i].tag == .CLOSE_BRACE){
+			if (depth == 0){
+				break;
+			}
+			depth -= 1;
+		}
+		else if (tokens[i].tag == .OPEN_BRACE){
+			depth += 1;
+		}
+		bind.text.append(tokens[i]);
+			catch unreachable;
+		token_index.* += 1;
+		i += 1;
+	}
+	if (tokens[i].tag != .CLOSE_BRACE){
+		return ParseError.PrematureEnd;
+	}
+	return bind;
+}
+
+pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) !Arg {
+	var i:u64 = 0;
+	if (tokens[i].tag == .IDENTIFIER){
+		token_index.* += 1;
+		return Arg {
+			.tag = .inclusion,
+			.name=tokens[i],
+			.pattern=Pattern{
+				.keyword=.{tokens[i]}
+			}
+		};
+	}
+	var arg = Arg{
+		.tag = .inclusion,
+		.name=undefined,
+		.pattern=undefined
+	};
+	if (tokens[i].tag == .EXCLUSION){
+		arg.tag = .exclusion;
+	}
+	else if (tokens[i].tag == .OPTIONAL){
+		arg.tag = .optional; 
+	}
+	else if (tokens[i].tag != .ARGUMENT){
+		return ParseError.UnexpectedToken;
+	}
+	i += 1;
+	token_index.* += 1;
+	if (tokens[i].tag != .IDENTIFIER){
+		return ParseError.UnexpectedToken;
+	}
+	arg.name = tokens[i];
+	i += 1;
+	token_index.* += 1;
+	if (tokens[i].tag != .IS_OF){
+		return ParseError.UnexpectedToken;
+	}
+	i += 1;
+	token_index.* += 1;
+	const old = i;
+	arg.pattern = try parse_pattern(mem, tokens[i..], &i);
+	token_index.* += old-i;
+	return arg;
+}
+
+pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) !Pattern {
+	//TODO
 }
