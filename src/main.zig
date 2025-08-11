@@ -36,6 +36,7 @@ pub fn main() !void {
 			return;
 		};
 		token_stream = &text;
+		show_program(program);
 		if (done){
 			break;
 		}
@@ -48,6 +49,7 @@ pub fn main() !void {
 			return;
 		};
 		token_stream = &auxil;
+		show_program(program);
 	}
 }
 
@@ -486,4 +488,55 @@ pub fn report_error(token_stream: *Buffer(Token), token_index: u64) void{
 		}
 	}
 	std.debug.print(" ^\n", .{});
+}
+
+pub fn show_program(program: ProgramText) void {
+	show_tokens(program.text.*);
+	for (program.binds.items) |bind| {
+		std.debug.print("{}: precedence {}\nargs:\n", .{bind.tag, bind.precedence});
+		for (bind.args.items) |arg| {
+			show_arg(arg);
+			std.debug.print("\n", .{});
+		}
+		std.debug.print("expansion:\n", .{});
+		show_tokens(bind.text);
+	}
+}
+
+pub fn show_arg(arg: Arg) void {
+	std.debug.print("{} {s}:", .{arg.tag, arg.name.text});
+	switch (arg.pattern){
+		.token => {},
+		.keyword => {
+			std.debug.print("{s}", .{arg.pattern.keyword.text});
+		},
+		.alternate => {
+			std.debug.print("[\n", .{});
+			for (arg.pattern.alternate.items) |*list| {
+				for (list.items) |inner| {
+					std.debug.print("| ", .{});
+					show_arg(inner.*);
+					std.debug.print("\n", .{});
+				}
+			}
+			std.debug.print("]", .{});
+		},
+		.group => {
+			show_arg(arg.pattern.group.open.*);
+			std.debug.print("...", .{});
+			show_arg(arg.pattern.group.close.*);
+		},
+		.variadic => {
+			for (arg.pattern.variadic.members.items) |positional| {
+				show_arg(positional.*);
+				std.debug.print("\n", .{});
+			}
+			if (arg.pattern.variadic.separator) |real|{
+				show_arg(real.*);
+			}
+			else{
+				std.debug.assert(false);
+			}
+		}
+	}
 }
