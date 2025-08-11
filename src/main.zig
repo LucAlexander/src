@@ -270,7 +270,15 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 		bind.tag = .pattern;
 	}
 	//TODO parse precedence
-	token_index.* += 2;
+	token_index.* += 1;
+	try skip_whitespace(tokens, token_index);
+	const precedence = tokens[token_index.*];
+	if (precedence.tag != .IDENTIFIER){
+		std.debug.print("Expected precedence level\n", .{});
+		return ParseError.UnexpectedToken;
+	}
+	bind.precedence = precedence.text[0];
+	token_index.* += 1;
 	while (token_index.* < tokens.len){
 		try skip_whitespace(tokens, token_index);
 		const token = &tokens[token_index.*];
