@@ -15,7 +15,7 @@ pub fn main() !void {
 	const mem = main_mem.allocator();
 	const txt = main_txt.allocator();
 	const aux = main_aux.allocator();
-	const tokens = tokenize(&mem, contents);
+	var tokens = tokenize(&mem, contents);
 	show_tokens(tokens);
 	var text = Buffer(Token).init(txt);
 	var auxil = Buffer(Token).init(aux);
@@ -30,23 +30,26 @@ pub fn main() !void {
 		text.clearRetainingCapacity();
 		done = parse(&mem, token_stream, &program) catch {
 			//TODO error report
+			return;
 		};
-		token_stream = program.text;
+		token_stream = &text;
 		if (done){
 			break;
 		}
 		program.text=&auxil;
 		auxil.clearRetainingCapacity();
-		done = parse(&mem, tokens, &program) catch {
+		done = parse(&mem, token_stream, &program) catch {
 			//TODO error report
+			return;
 		};
-		token_stream = program.auxil;
+		token_stream = &auxil;
 	}
 }
 
 const ParseError = error {
 	PrematureEnd,
-	UnexpectedToken
+	UnexpectedToken,
+	UnexpectedEOF
 };
 
 const TOKEN = enum {
@@ -215,7 +218,7 @@ pub fn show_tokens(tokens: Buffer(Token)) void {
 	std.debug.print("\n", .{});
 }
 
-pub fn parse(mem: *const std.mem.Allocator, tokens: Buffer(Token), program: *ProgramText) !bool {
+pub fn parse(mem: *const std.mem.Allocator, tokens: *Buffer(Token), program: *ProgramText) !bool {
 	var done = true;
 	var token_index:u64 = 0;
 	while (token_index < tokens.items.len){
@@ -242,11 +245,18 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 		tokens[0].tag == .BIND_PATTERN
 	);
 	var bind = Bind{
-		.tag = tokens[0].tag,
+		.tag = .rewrite,
 		.precedence=0,
 		.args=Buffer(Arg).init(mem.*),
-		.text=Buffer(Token).init(mem*)
+		.text=Buffer(Token).init(mem.*)
 	};
+	if (tokens[0].tag == .BIND_COMP){
+		bind.tag = .compile;
+	}
+	else if (tokens[0].tag == .BIND_PATTERN){
+		bind.tag = .pattern;
+	}
+	//TODO parse precedence
 	var i:u64 = 2;
 	while (i < tokens.len){
 		const token = &tokens[i];
@@ -270,7 +280,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 		else if (tokens[i].tag == .OPEN_BRACE){
 			depth += 1;
 		}
-		bind.text.append(tokens[i]);
+		bind.text.append(tokens[i])
 			catch unreachable;
 		token_index.* += 1;
 		i += 1;
@@ -281,8 +291,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 	return bind;
 }
 
-//TODO length checks
-pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) !Arg {
+pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) ParseError!Arg {
 	var i:u64 = 0;
 	if (tokens[i].tag == .IDENTIFIER){
 		token_index.* += 1;
@@ -290,7 +299,7 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 			.tag = .inclusion,
 			.name=tokens[i],
 			.pattern=Pattern{
-				.keyword=.{tokens[i]}
+				.keyword=tokens[i]
 			}
 		};
 	}
@@ -310,25 +319,34 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 	}
 	i += 1;
 	token_index.* += 1;
+	if (i == tokens.len){
+		return ParseError.UnexpectedEOF;
+	}
 	if (tokens[i].tag != .IDENTIFIER){
 		return ParseError.UnexpectedToken;
 	}
 	arg.name = tokens[i];
 	i += 1;
 	token_index.* += 1;
+	if (i == tokens.len){
+		return ParseError.UnexpectedEOF;
+	}
 	if (tokens[i].tag != .IS_OF){
 		token_index.* += 1;
 		arg.pattern = Pattern.token;
 	}
 	i += 1;
 	token_index.* += 1;
+	if (i == tokens.len){
+		return ParseError.UnexpectedEOF;
+	}
 	const old = i;
 	arg.pattern = try parse_pattern(mem, tokens[i..], &i);
 	token_index.* += old-i;
 	return arg;
 }
 
-pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) !Pattern {
+pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) ParseError!Pattern {
 	var i: u64 = 0;
 	if (tokens[i].tag == .OPEN_BRACK){
 		var pattern = Pattern{
@@ -336,6 +354,9 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 		};
 		token_index.* += 1;
 		i += 1;
+		if (i == tokens.len){
+			return ParseError.UnexpectedEOF;
+		}
 		while (i < tokens.len){
 			if (tokens[i].tag == .CLOSE_BRACK){
 				break;
@@ -343,7 +364,8 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 			var list = Buffer(*Arg).init(mem.*);
 			while (i < tokens.len){
 				const old = i;
-				var loc = mem.create(Arg);
+				const loc = mem.create(Arg)
+					catch unreachable;
 				loc.* = try parse_arg(mem, tokens[i..], &i);
 				token_index.* += old-i;
 				list.append(loc)
@@ -366,7 +388,8 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 		};
 		while (i < tokens.len){
 			const old = i;
-			var loc = mem.create(Arg);
+			const loc = mem.create(Arg)
+					catch unreachable;
 			loc.* = try parse_arg(mem, tokens[i..], &i);
 			token_index.* += old-1;
 			pattern.variadic.members.append(loc)
@@ -379,14 +402,16 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 		std.debug.assert(pattern.variadic.separator != null);
 		return pattern;
 	}
-	var open_loc = mem.create(Arg);
+	const open_loc = mem.create(Arg)
+		catch unreachable;
 	var old = i;
 	open_loc.* = try parse_arg(mem, tokens[i..], &i);
 	token_index.* += old-i;
 	if (tokens[i].tag != .ELIPSES){
 		return ParseError.UnexpectedToken;
 	}
-	var close_loc = mem.create(Arg);
+	const close_loc = mem.create(Arg)
+		catch unreachable;
 	old = i;
 	close_loc.* = try parse_arg(mem, tokens[i..], &i);
 	token_index.* += old-i;
