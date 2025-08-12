@@ -113,7 +113,7 @@ const Bind = struct {
 
 const AppliedBind = struct {
 	bind: *Bind,
-	expansions: Buffer([]Token),
+	expansions: Buffer(?[]Token),
 	start_index: u64,
 	end_index: u64
 };
@@ -634,7 +634,7 @@ pub fn apply_pattern(pattern: *Pattern, tokens: []Token, token_index: u64) Patte
 			return tokens[token_index..token_index+1];
 		},
 		.keyword => {
-			if (token_equal(tokens[tokens_index.*], pattern.keyword)){
+			if (token_equal(&tokens[tokens_index.*], &pattern.keyword)){
 				return tokens[token_index..token_index+1];
 			}
 			return PatternError.MissingKeyword;
@@ -696,11 +696,13 @@ pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, t
 	const save_index = token_index.*;
 	var list = Buffer([]Token).init(mem.*);
 	for (bind.args) |*arg| {
-		const sequence = apply_arg(arg, tokens, token_index.*) catch {
+		const sequence = apply_rule(arg, tokens, token_index.*) catch {
 			token_index.* = save_index;
 			return null;
 		}
-		token_index.* += sequence.len;
+		if (sequence) |seq| {
+			token_index.* += seq.len;
+		}
 		list.append(sequence)
 			catch unreachable;
 	}
@@ -763,10 +765,35 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 				adjust = true;
 			}
 			rewrite: {
-				//TODO
-				/*
-				 	
-				*/
+				outer: for (current.bind.text.items) |*token| {
+					for (current.bind.args.items, 0..) |*arg, index| {
+						if (arg.tag == .optional){
+							if (current.replacements.items[index] != null){
+								if (@tagOf(arg.pattern) == Pattern.keyword){
+									for (current.replacements.items[index]) |*token| {
+										new.append(token.*);
+									}
+									continue :outer;
+								}
+							}
+						}
+						if (arg.tag == .inclusion){
+							if (@tagOf(arg.pattern) == Pattern.keyword){
+								std.debug.assert(current.replacements.items[index] != null);
+								for (current.replacements.items[index]) |*token| {
+									new.append(token.*);
+								}
+								continue :outer;
+							}
+							else if (@tagOf(arg.pattern) == Pattern.variadic){
+								//TODO expand loop
+								continue :outer;
+							}
+						}
+						//TODO do we have to do anythingh with iden, create unique identifier and replace directly, we'll leave without for now I gues and come back to it
+					}
+					new.append(token.*);
+				}
 			};
 			if (adjust == true){
 				reparse = true;
@@ -777,6 +804,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 				}
 				break;
 			}
+			i += 1;
 		}
 		program.text = new;
 		if (new == aux){
@@ -794,3 +822,9 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 	return stream;
 }
 
+pub fn token_equal(a: *Token, b: *Token) bool {
+	if (a.tag != b.tag){
+		return false;
+	}
+	return a.text == b.text;
+}
