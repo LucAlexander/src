@@ -37,11 +37,13 @@ pub fn main() !void {
 			return;
 		};
 		show_program(program);
-		std.debug.print("--------------------------------\n", .{});
+		std.debug.print("parsed--------------------------\n", .{});
 		if (done){
 			break;
 		}
-		token_stream = apply_binds(&mem, &auxil, &text, &program);
+		token_stream = apply_binds(&mem, &text, &auxil, &program);
+		show_tokens(token_stream.*);
+		std.debug.print("applied binds-------------------\n", .{});
 	}
 }
 
@@ -315,6 +317,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 		std.debug.print("Program ended in the middle of a bind expansion defintion, expected closing brace\n", .{});
 		return ParseError.PrematureEnd;
 	}
+	token_index.* += 1;
 	return bind;
 }
 
@@ -792,11 +795,11 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 	while (precedence > '0') {
 		var reparse = false;
 		const blocks = block_binds(mem, program, precedence);
-		new.clearRetainingCapacity();
 		if (blocks.items.len == 0){
 			precedence -= 1;
 			continue;
 		}
+		new.clearRetainingCapacity();
 		var i: u64 = 0;
 		var token_index:u64 = 0;
 		while (i < blocks.items.len-1){
