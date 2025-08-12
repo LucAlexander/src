@@ -17,6 +17,7 @@ pub fn main() !void {
 	const aux = main_aux.allocator();
 	var tokens = tokenize(&mem, contents);
 	show_tokens(tokens);
+	std.debug.print("initial------------------------------\n", .{});
 	var text = Buffer(Token).init(txt);
 	var auxil = Buffer(Token).init(aux);
 	var program = ProgramText{
@@ -36,6 +37,7 @@ pub fn main() !void {
 			return;
 		};
 		show_program(program);
+		std.debug.print("--------------------------------\n", .{});
 		if (done){
 			break;
 		}
@@ -46,7 +48,7 @@ pub fn main() !void {
 const ParseError = error {
 	PrematureEnd,
 	UnexpectedToken,
-	UnexpectedEOf
+	UnexpectedEOF
 };
 
 const TOKEN = enum {
@@ -111,9 +113,14 @@ const Bind = struct {
 	text: Buffer(Token)
 };
 
+const ArgPair = struct {
+	name: Arg,
+	expansion: []Token
+};
+
 const AppliedBind = struct {
 	bind: *Bind,
-	expansions: Buffer(?[]Token),
+	expansions: Buffer(ArgPair),
 	start_index: u64,
 	end_index: u64
 };
@@ -346,8 +353,8 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 			}
 		};
 		var inner = Buffer(*Arg).init(mem.*);
-		const atloc = mem.create(Arg);
-		const idenloc = mem.create(Arg);
+		const atloc = mem.create(Arg) catch unreachable;
+		const idenloc = mem.create(Arg) catch unreachable;
 		atloc.* = Arg{
 			.tag=.inclusion,
 			.name=tokens[token_index.*-1],
@@ -546,6 +553,7 @@ pub fn report_error(token_stream: *Buffer(Token), token_index: u64) void{
 
 pub fn show_program(program: ProgramText) void {
 	show_tokens(program.text.*);
+	std.debug.print("end text -----------\n", .{});
 	for (program.binds.items) |bind| {
 		std.debug.print("{}: precedence {}\nargs:\n", .{bind.tag, bind.precedence});
 		for (bind.args.items) |arg| {
@@ -555,6 +563,7 @@ pub fn show_program(program: ProgramText) void {
 		std.debug.print("expansion:\n", .{});
 		show_tokens(bind.text);
 	}
+	std.debug.print("end binds ----------\n", .{});
 }
 
 pub fn show_arg(arg: Arg) void {
@@ -603,89 +612,122 @@ const PatternError = error {
 	ExclusionPresent
 };
 
-//TODO make these systems first try to match macros, then instructions, then tokens
-pub fn apply_rule(rule: *Arg, tokens: []Token, token_index: u64) PatternError!?[]Token {
+pub fn apply_rule(mem: *const std.mem.Allocator, rule: *Arg, tokens: []Token, token_index: u64) PatternError!Buffer(ArgPair){
 	switch (rule.tag){
 		.unique => {
-			std.debug.assert(@tagOf(rule.pattern) == Pattern.alternate);
-			return apply_pattern(&rule.pattern, tokens, token_index);
+			std.debug.assert(rule.pattern == Pattern.alternate);
+			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index);
 		},
 		.inclusion => {
-			return apply_pattern(&rule.pattern, tokens, token_index);
+			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index);
 		},
 		.exclusion => {
-			apply_pattern(&rule.pattern, tokens, token_index) catch {
-				return null;
+			_ = apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index) catch {
+				return Buffer(ArgPair).init(mem.*);
 			};
 			return PatternError.ExclusionPresent;
 		},
 		.optional => {
-			return apply_pattern(&rule.pattern, tokens, token_index) catch {
-				return null;
+			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index) catch {
+				return Buffer(ArgPair).init(mem.*);
 			};
 		}
 	}
 	unreachable;
 }
 
-pub fn apply_pattern(pattern: *Pattern, tokens: []Token, token_index: u64) PatternError![]Token {
-	switch (pattern){
+pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern, tokens: []Token, token_index: u64) PatternError!Buffer(ArgPair) {
+	var list = Buffer(ArgPair).init(mem.*);
+	switch (pattern.*){
 		.token => {
-			return tokens[token_index..token_index+1];
+			list.append(ArgPair{.name=name, .expansion=tokens[token_index..token_index+1]})
+				catch unreachable;
+			return list;
 		},
 		.keyword => {
-			if (token_equal(&tokens[tokens_index.*], &pattern.keyword)){
-				return tokens[token_index..token_index+1];
+			if (token_equal(&tokens[token_index], &pattern.keyword)){
+				list.append(ArgPair{.name=name, .expansion=tokens[token_index..token_index+1]})
+					catch unreachable;
+				return list;
 			}
 			return PatternError.MissingKeyword;
 		},
 		.alternate => {
-			blk: for (pattern.alternate.items) |*list| {
+			blk: for (pattern.alternate.items) |*seqlist| {
 				var temp_index = token_index;
-				for (list.items) |arg| {
-					const sequence = apply_rule(arg, tokens, temp_index) catch {
+				for (seqlist.items) |arg| {
+					const sequence = apply_rule(mem, arg, tokens, temp_index) catch {
+						list.clearRetainingCapacity();
 						continue :blk;
 					};
-					temp_index += 1;
+					for (sequence.items) |*subarg| {
+						list.append(subarg.*)
+							catch unreachable;
+						temp_index += subarg.expansion.len;
+					}
 				}
-				return tokens[token_index..temp_index];
+				list.append(ArgPair{.name=name, .expansion=tokens[token_index..temp_index]})
+					catch unreachable;
+				return list;
 			}
 			return PatternError.ExhaustedAlternate;
 		},
 		.group => {
-			const open_sequence = try apply_rule(pattern.group.open, tokens, token_index);
-			var temp_index = token_index + open_sequence.len;
+			const open_sequence = try apply_rule(mem, pattern.group.open, tokens, token_index);
+			for (open_sequence.items) |*arg| {
+				list.append(arg.*)
+					catch unreachable;
+			}
+			var temp_index = token_index + open_sequence.items.len;
 			while (temp_index < tokens.len){
-				const close_sequence = apply_rule(pattern.group.close, tokens, temp_index) catch {
+				const close_sequence = apply_rule(mem, pattern.group.close, tokens, temp_index) catch {
 					temp_index += 1;
 					continue;
 				};
-				temp_index += close_sequence.len;
+				for (close_sequence.items) |*arg| {
+					list.append(arg.*)
+						catch unreachable;
+					temp_index += arg.expansion.len;
+				}
 				break;
 			}
-			return tokens[token_index..temp_index];
+			list.append(ArgPair{.name=name, .expansion=tokens[token_index..temp_index]})
+				catch unreachable;
+			return list;
 		},
 		.variadic => {
 			std.debug.assert(pattern.variadic.separator != null);
 			var temp_index:u64 = token_index;
 			var times:u64 = 0;
-			var matches = true;
-			while (matches){
-				var save_index = temp_index;
+			while (true){
+				const save_index = temp_index;
 				for (pattern.variadic.members.items) |arg| {
-					const sequence = apply_rule(arg, tokens, temp_index) catch |err| {
+					const sequence = apply_rule(mem, arg, tokens, temp_index) catch |err| {
 						if (times == 0){
 							return err;
 						}
-						return tokens[token_index..save_index];
+						list.append(ArgPair{.name=name, .expansion=tokens[token_index..save_index]})
+							catch unreachable;
+						return list;
 					};
-					token_index += sequence.len;
+					for (sequence.items) |*subarg| {
+						list.append(subarg.*)
+							catch unreachable;
+						temp_index += subarg.expansion.len;
+					}
 				}
-				const sep_sequence = apply_rule(pattern.variadic.separator, tokens, temp_index) catch {
-					return tokens[token_index..temp_index];
+				std.debug.assert(pattern.variadic.separator != null);
+				const sep_sequence = apply_rule(mem, pattern.variadic.separator.?, tokens, temp_index) catch {
+					list.append(ArgPair{.name=name, .expansion=tokens[token_index..temp_index]})
+						catch unreachable;
+					return list;
 				};
+				for (sep_sequence.items) |*arg| {
+					list.append(arg.*)
+						catch unreachable;
+					temp_index += arg.expansion.len;
+				}
 				times = 1;
-				temp_index += sep_sequence.len;
 			}
 		}
 	}
@@ -694,17 +736,17 @@ pub fn apply_pattern(pattern: *Pattern, tokens: []Token, token_index: u64) Patte
 
 pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, token_index: *u64) ?AppliedBind {
 	const save_index = token_index.*;
-	var list = Buffer([]Token).init(mem.*);
-	for (bind.args) |*arg| {
-		const sequence = apply_rule(arg, tokens, token_index.*) catch {
+	var list = Buffer(ArgPair).init(mem.*);
+	for (bind.args.items) |*arg| {
+		const sequence = apply_rule(mem, arg, tokens, token_index.*) catch {
 			token_index.* = save_index;
 			return null;
+		};
+		for (sequence.items) |*pair| {
+			list.append(pair.*)
+				catch unreachable;
+			token_index.* += pair.expansion.len;
 		}
-		if (sequence) |seq| {
-			token_index.* += seq.len;
-		}
-		list.append(sequence)
-			catch unreachable;
 	}
 	return AppliedBind{
 		.bind = bind,
@@ -718,14 +760,19 @@ pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precede
 	var buffer = Buffer(AppliedBind).init(mem.*);
 	var i: u64 = 0;
 	while (i < program.text.items.len){
+		var found = false;
 		for (program.binds.items) |*bind| {
 			if (bind.precedence != precedence){
 				continue;
 			}
-			if (apply_bind(mem, bind, program.text, items, &i)) |applied| {
+			if (apply_bind(mem, bind, program.text.items, &i)) |applied| {
+				found = true;
 				buffer.append(applied)
 					catch unreachable;
 			}
+		}
+		if (!found){
+			i += 1;
 		}
 	}
 	return buffer;
@@ -734,7 +781,7 @@ pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precede
 pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buffer(Token), program: *ProgramText) *Buffer(Token) {
 	var precedence: u64 = blk: {
 		var max: u64 = '0';
-		for (programText.binds.items) |*bind| {
+		for (program.binds.items) |*bind| {
 			if (bind.precedence > max){
 				max = bind.precedence;
 			}
@@ -745,17 +792,18 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 	while (precedence > '0') {
 		var reparse = false;
 		const blocks = block_binds(mem, program, precedence);
-		var new.clearRetainingCapacity();
+		new.clearRetainingCapacity();
 		if (blocks.items.len == 0){
+			precedence -= 1;
 			continue;
 		}
 		var i: u64 = 0;
-		var token_index = 0;
+		var token_index:u64 = 0;
 		while (i < blocks.items.len-1){
 			const current = blocks.items[i];
 			const next = blocks.items[i+1];
 			while (token_index < current.start_index){
-				new.append(program.text[token_index])
+				new.append(program.text.items[token_index])
 					catch unreachable;
 				token_index += 1;
 			}
@@ -764,41 +812,35 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 			if (current.end_index > next.start_index and current.end_index < next.end_index){
 				adjust = true;
 			}
-			rewrite: {
-				outer: for (current.bind.text.items) |*token| {
-					for (current.bind.args.items, 0..) |*arg, index| {
-						if (arg.tag == .optional){
-							if (current.replacements.items[index] != null){
-								if (@tagOf(arg.pattern) == Pattern.keyword){
-									for (current.replacements.items[index]) |*token| {
-										new.append(token.*);
-									}
-									continue :outer;
-								}
-							}
+			outer: for (current.bind.text.items) |*token| {
+				for (current.expansions.items) |*arg|{
+					if (token_equal(token, &arg.name.name)){
+						if (arg.name.pattern == Pattern.alternate){
+							//TODO
+							continue :outer;
 						}
-						if (arg.tag == .inclusion){
-							if (@tagOf(arg.pattern) == Pattern.keyword){
-								std.debug.assert(current.replacements.items[index] != null);
-								for (current.replacements.items[index]) |*token| {
-									new.append(token.*);
-								}
-								continue :outer;
-							}
-							else if (@tagOf(arg.pattern) == Pattern.variadic){
-								//TODO expand loop
-								continue :outer;
-							}
+						if (arg.name.pattern == Pattern.variadic){
+							//TODO
+							continue :outer;
 						}
-						//TODO do we have to do anythingh with iden, create unique identifier and replace directly, we'll leave without for now I gues and come back to it
+						if (arg.name.tag == .unique){
+							//TODO
+							continue :outer;
+						}
+						for (arg.expansion) |*tok| {
+							new.append(tok.*)
+								catch unreachable;
+						}
+						continue :outer;
 					}
-					new.append(token.*);
 				}
-			};
+				new.append(token.*)
+					catch unreachable;
+			}
 			if (adjust == true){
 				reparse = true;
-				while (token_index < program.text.len){
-					new.append(program.te[token_index])
+				while (token_index < program.text.items.len){
+					new.append(program.text.items[token_index])
 						catch unreachable;
 					token_index += 1;
 				}
@@ -818,7 +860,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 		}
 	}
 	const stream = program.text;
-	program.text = new
+	program.text = new;
 	return stream;
 }
 
@@ -826,5 +868,5 @@ pub fn token_equal(a: *Token, b: *Token) bool {
 	if (a.tag != b.tag){
 		return false;
 	}
-	return a.text == b.text;
+	return std.mem.eql(u8, a.text, b.text);
 }
