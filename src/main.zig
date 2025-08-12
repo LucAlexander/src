@@ -26,9 +26,9 @@ pub fn main() !void {
 	var token_stream = &tokens;
 	var done = false;
 	var token_index: u64 = 0;
+	program.text=&text;
 	while (!done){
-		program.text=&text;
-		text.clearRetainingCapacity();
+		program.text.clearRetainingCapacity();
 		token_index = 0;
 		done = parse(&mem, token_stream, &program, &token_index) catch |err| {
 			std.debug.print("Parse Error {}\n", .{err});
@@ -729,7 +729,7 @@ pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precede
 	return buffer;
 }
 
-pub fn apply_binds(mem: *const std.mem.Allocator, txt: *const std.mem.Allocator, aux: *const std.mem.Allocator, program: *ProgramText) *const std.mem.Allocator {
+pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buffer(Token), program: *ProgramText) *Buffer(Token) {
 	var precedence: u64 = blk: {
 		var max: u64 = '0';
 		for (programText.binds.items) |*bind| {
@@ -739,11 +739,11 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *const std.mem.Allocator,
 		}
 		break :blk max;
 	};
-	var target_mem = aux;
+	var new = aux;
 	while (precedence > '0') {
 		var reparse = false;
 		const blocks = block_binds(mem, program, precedence);
-		var new = Buffer(Token).init(target_mem.*);
+		var new.clearRetainingCapacity();
 		if (blocks.items.len == 0){
 			continue;
 		}
@@ -764,6 +764,9 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *const std.mem.Allocator,
 			}
 			rewrite: {
 				//TODO
+				/*
+				 	
+				*/
 			};
 			if (adjust == true){
 				reparse = true;
@@ -776,17 +779,18 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *const std.mem.Allocator,
 			}
 		}
 		program.text = new;
-		if (target_mem == aux){
-			target_mem = txt;
+		if (new == aux){
+			new = txt;
 		}
 		else {
-			target_mem = aux;
+			new = aux;
 		}
 		if (reparse == false){
 			precedence -= 1;
 		}
 	}
-	return target_mem;
+	const stream = program.text;
+	program.text = new
+	return stream;
 }
 
-//TODO parse program text with bind rules after current parse section, apply replacement, feed that replaced buffer to next parser
