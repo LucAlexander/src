@@ -121,6 +121,12 @@ const Bind = struct {
 	text: Buffer(Token)
 };
 
+const AppliedBind = struct {
+	bind: *Bind,
+	expansions: Buffer([]Token),
+	block=[]Token
+};
+
 const ProgramText = struct {
 	text: *Buffer(Token),
 	binds: Buffer(Bind)
@@ -607,23 +613,23 @@ const PatternError = error {
 };
 
 //TODO make these systems first try to match macros, then instructions, then tokens
-pub fn apply_rule(mem: *const std.mem.Allocator, rule: *Arg, tokens: []Token, token_index: u64) PatternError!?[]Token {
+pub fn apply_rule(rule: *Arg, tokens: []Token, token_index: u64) PatternError!?[]Token {
 	switch (rule.tag){
 		.unique => {
 			std.debug.assert(@tagOf(rule.pattern) == Pattern.alternate);
-			return apply_pattern(mem, &rule.pattern, tokens, token_index);
+			return apply_pattern(&rule.pattern, tokens, token_index);
 		},
 		.inclusion => {
-			return apply_pattern(mem, &rule.pattern, tokens, token_index);
+			return apply_pattern(&rule.pattern, tokens, token_index);
 		},
 		.exclusion => {
-			apply_pattern(mem, &rule.pattern, tokens, token_index) catch {
+			apply_pattern(&rule.pattern, tokens, token_index) catch {
 				return null;
 			};
 			return PatternError.ExclusionPresent;
 		},
 		.optional => {
-			return apply_pattern(mem, &rule.pattern, tokens, token_index) catch {
+			return apply_pattern(&rule.pattern, tokens, token_index) catch {
 				return null;
 			};
 		}
@@ -631,7 +637,7 @@ pub fn apply_rule(mem: *const std.mem.Allocator, rule: *Arg, tokens: []Token, to
 	unreachable;
 }
 
-pub fn apply_pattern(mem: *const std.mem.Allocator, pattern: *Pattern, tokens: []Token, token_index: u64) PatternError![]Token {
+pub fn apply_pattern(pattern: *Pattern, tokens: []Token, token_index: u64) PatternError![]Token {
 	switch (pattern){
 		.token => {
 			return tokens[token_index..token_index+1];
@@ -646,7 +652,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, pattern: *Pattern, tokens: [
 			blk: for (pattern.alternate.items) |*list| {
 				var temp_index = token_index;
 				for (list.items) |arg| {
-					const sequence = apply_rule(mem, arg, tokens, temp_index) catch {
+					const sequence = apply_rule(arg, tokens, temp_index) catch {
 						continue :blk;
 					};
 					temp_index += 1;
@@ -656,10 +662,10 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, pattern: *Pattern, tokens: [
 			return PatternError.ExhaustedAlternate;
 		},
 		.group => {
-			const open_sequence = try apply_rule(mem, pattern.group.open, tokens, token_index);
+			const open_sequence = try apply_rule(pattern.group.open, tokens, token_index);
 			var temp_index = token_index + open_sequence.len;
 			while (temp_index < tokens.len){
-				const close_sequence = apply_rule(mem, pattern.group.close, tokens, temp_index) catch {
+				const close_sequence = apply_rule(pattern.group.close, tokens, temp_index) catch {
 					temp_index += 1;
 					continue;
 				};
@@ -676,7 +682,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, pattern: *Pattern, tokens: [
 			while (matches){
 				var save_index = temp_index;
 				for (pattern.variadic.members.items) |arg| {
-					const sequence = apply_rule(mem, arg, tokens, temp_index) catch |err| {
+					const sequence = apply_rule(arg, tokens, temp_index) catch |err| {
 						if (times == 0){
 							return err;
 						}
@@ -684,7 +690,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, pattern: *Pattern, tokens: [
 					};
 					token_index += sequence.len;
 				}
-				const sep_sequence = apply_rule(mem, pattern.variadic.separator, tokens, temp_index) catch {
+				const sep_sequence = apply_rule(pattern.variadic.separator, tokens, temp_index) catch {
 					return tokens[token_index..temp_index];
 				};
 				times = 1;
@@ -693,6 +699,44 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, pattern: *Pattern, tokens: [
 		}
 	}
 	unreachable;
+}
+
+pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, token_index: *u64) ?AppliedBind {
+	const save_index = token_index.*;
+	var list = Buffer([]Token).init(mem.*);
+	for (bind.args) |*arg| {
+		const sequence = apply_arg(arg, tokens, token_index.*) catch {
+			token_index.* = save_index;
+			return null;
+		}
+		token_index.* += sequence.len;
+		list.append(sequence)
+			catch unreachable;
+	}
+	return AppliedBind{
+		.bind = bind,
+		.expansions=list,
+		.block=tokens[save_index..token_index.*]
+	};
+}
+
+pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText) Buffer(AppliedBind) {
+	var buffer = Buffer(AppliedBind).init(mem.*);
+	var i: u64 = 0;
+	while (i < program.text.items.len){
+		for (program.binds.items) |*bind| {
+			if (apply_bind(mem, bind, program.text, items, &i)) |applied| {
+				buffer.append(applied)
+					catch unreachable;
+			}
+		}
+	}
+	return buffer;
+}
+
+pub fn apply_binds(mem: *const std.mem.Allocator, program: *ProgramText) void {
+	const blocks = block_binds(mem, program);
+
 }
 
 //TODO parse program text with bind rules after current parse section, apply replacement, feed that replaced buffer to next parser
