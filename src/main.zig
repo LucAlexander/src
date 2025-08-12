@@ -344,8 +344,31 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 		const arg = Arg {
 			.tag = .unique,
 			.name = tokens[token_index.*],
-			.pattern=Pattern.token
+			.pattern=Pattern{
+				.alternate=Buffer(Buffer(*Arg)).init(mem.*)
+			}
 		};
+		var inner = Buffer(*Arg).init(mem.*);
+		const atloc = mem.create(Arg);
+		const idenloc = mem.create(Arg);
+		atloc.* = Arg{
+			.tag=.inclusion,
+			.name=tokens[token_index.*-1],
+			.pattern=Pattern{
+				.keyword=tokens[token_index.*-1]
+			}
+		};
+		idenloc.* = Arg{
+			.tag=.inclusion,
+			.name=tokens[token_index.*],
+			.pattern=Pattern{
+				.keyword=tokens[token_index.*]
+			}
+		};
+		inner.append(atloc)
+			catch unreachable;
+		inner.append(idenloc)
+			catch unreachable;
 		token_index.* += 1;
 		return arg;
 	}
@@ -575,6 +598,101 @@ pub fn show_arg(arg: Arg) void {
 			std.debug.print("VARIADIC_CLOSE", .{});
 		}
 	}
+}
+
+const PatternError = error {
+	MissingKeyword,
+	ExhaustedAlternate,
+	ExclusionPresent
+};
+
+//TODO make these systems first try to match macros, then instructions, then tokens
+pub fn apply_rule(mem: *const std.mem.Allocator, rule: *Arg, tokens: []Token, token_index: u64) PatternError!?[]Token {
+	switch (rule.tag){
+		.unique => {
+			std.debug.assert(@tagOf(rule.pattern) == Pattern.alternate);
+			return apply_pattern(mem, &rule.pattern, tokens, token_index);
+		},
+		.inclusion => {
+			return apply_pattern(mem, &rule.pattern, tokens, token_index);
+		},
+		.exclusion => {
+			apply_pattern(mem, &rule.pattern, tokens, token_index) catch {
+				return null;
+			};
+			return PatternError.ExclusionPresent;
+		},
+		.optional => {
+			return apply_pattern(mem, &rule.pattern, tokens, token_index) catch {
+				return null;
+			};
+		}
+	}
+	unreachable;
+}
+
+pub fn apply_pattern(mem: *const std.mem.Allocator, pattern: *Pattern, tokens: []Token, token_index: u64) PatternError![]Token {
+	switch (pattern){
+		.token => {
+			return tokens[token_index..token_index+1];
+		},
+		.keyword => {
+			if (token_equal(tokens[tokens_index.*], pattern.keyword)){
+				return tokens[token_index..token_index+1];
+			}
+			return PatternError.MissingKeyword;
+		},
+		.alternate => {
+			blk: for (pattern.alternate.items) |*list| {
+				var temp_index = token_index;
+				for (list.items) |arg| {
+					const sequence = apply_rule(mem, arg, tokens, temp_index) catch {
+						continue :blk;
+					};
+					temp_index += 1;
+				}
+				return tokens[token_index..temp_index];
+			}
+			return PatternError.ExhaustedAlternate;
+		},
+		.group => {
+			const open_sequence = try apply_rule(mem, pattern.group.open, tokens, token_index);
+			var temp_index = token_index + open_sequence.len;
+			while (temp_index < tokens.len){
+				const close_sequence = apply_rule(mem, pattern.group.close, tokens, temp_index) catch {
+					temp_index += 1;
+					continue;
+				};
+				temp_index += close_sequence.len;
+				break;
+			}
+			return tokens[token_index..temp_index];
+		},
+		.variadic => {
+			std.debug.assert(pattern.variadic.separator != null);
+			var temp_index:u64 = token_index;
+			var times:u64 = 0;
+			var matches = true;
+			while (matches){
+				var save_index = temp_index;
+				for (pattern.variadic.members.items) |arg| {
+					const sequence = apply_rule(mem, arg, tokens, temp_index) catch |err| {
+						if (times == 0){
+							return err;
+						}
+						return tokens[token_index..save_index];
+					};
+					token_index += sequence.len;
+				}
+				const sep_sequence = apply_rule(mem, pattern.variadic.separator, tokens, temp_index) catch {
+					return tokens[token_index..temp_index];
+				};
+				times = 1;
+				temp_index += sep_sequence.len;
+			}
+		}
+	}
+	unreachable;
 }
 
 //TODO parse program text with bind rules after current parse section, apply replacement, feed that replaced buffer to next parser
