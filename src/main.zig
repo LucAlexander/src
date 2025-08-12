@@ -35,28 +35,18 @@ pub fn main() !void {
 			report_error(token_stream, token_index);
 			return;
 		};
-		token_stream = &text;
 		show_program(program);
 		if (done){
 			break;
 		}
-		program.text=&auxil;
-		auxil.clearRetainingCapacity();
-		token_index = 0;
-		done = parse(&mem, token_stream, &program, &token_index) catch |err| {
-			std.debug.print("Parse Error {}\n", .{err});
-			report_error(token_stream, token_index);
-			return;
-		};
-		token_stream = &auxil;
-		show_program(program);
+		token_stream = apply_binds(&mem, &auxil, &text, &program);
 	}
 }
 
 const ParseError = error {
 	PrematureEnd,
 	UnexpectedToken,
-	UnexpectedEOF
+	UnexpectedEOf
 };
 
 const TOKEN = enum {
@@ -124,7 +114,8 @@ const Bind = struct {
 const AppliedBind = struct {
 	bind: *Bind,
 	expansions: Buffer([]Token),
-	block=[]Token
+	start_index: u64,
+	end_index: u64
 };
 
 const ProgramText = struct {
@@ -716,15 +707,19 @@ pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, t
 	return AppliedBind{
 		.bind = bind,
 		.expansions=list,
-		.block=tokens[save_index..token_index.*]
+		.start_index = save_index,
+		.end_index = token_index.*
 	};
 }
 
-pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText) Buffer(AppliedBind) {
+pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precedence: u64) Buffer(AppliedBind) {
 	var buffer = Buffer(AppliedBind).init(mem.*);
 	var i: u64 = 0;
 	while (i < program.text.items.len){
 		for (program.binds.items) |*bind| {
+			if (bind.precedence != precedence){
+				continue;
+			}
 			if (apply_bind(mem, bind, program.text, items, &i)) |applied| {
 				buffer.append(applied)
 					catch unreachable;
@@ -734,9 +729,64 @@ pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText) Buffer(
 	return buffer;
 }
 
-pub fn apply_binds(mem: *const std.mem.Allocator, program: *ProgramText) void {
-	const blocks = block_binds(mem, program);
-
+pub fn apply_binds(mem: *const std.mem.Allocator, txt: *const std.mem.Allocator, aux: *const std.mem.Allocator, program: *ProgramText) *const std.mem.Allocator {
+	var precedence: u64 = blk: {
+		var max: u64 = '0';
+		for (programText.binds.items) |*bind| {
+			if (bind.precedence > max){
+				max = bind.precedence;
+			}
+		}
+		break :blk max;
+	};
+	var target_mem = aux;
+	while (precedence > '0') {
+		var reparse = false;
+		const blocks = block_binds(mem, program, precedence);
+		var new = Buffer(Token).init(target_mem.*);
+		if (blocks.items.len == 0){
+			continue;
+		}
+		var i: u64 = 0;
+		var token_index = 0;
+		while (i < blocks.items.len-1){
+			const current = blocks.items[i];
+			const next = blocks.items[i+1];
+			while (token_index < current.start_index){
+				new.append(program.text[token_index])
+					catch unreachable;
+				token_index += 1;
+			}
+			token_index = current.end_index + 1;
+			var adjust = false;
+			if (current.end_index > next.start_index and current.end_index < next.end_index){
+				adjust = true;
+			}
+			rewrite: {
+				//TODO
+			};
+			if (adjust == true){
+				reparse = true;
+				while (token_index < program.text.len){
+					new.append(program.te[token_index])
+						catch unreachable;
+					token_index += 1;
+				}
+				break;
+			}
+		}
+		program.text = new;
+		if (target_mem == aux){
+			target_mem = txt;
+		}
+		else {
+			target_mem = aux;
+		}
+		if (reparse == false){
+			precedence -= 1;
+		}
+	}
+	return target_mem;
 }
 
 //TODO parse program text with bind rules after current parse section, apply replacement, feed that replaced buffer to next parser
