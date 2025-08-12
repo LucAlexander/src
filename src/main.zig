@@ -90,7 +90,7 @@ const Token = struct {
 
 const Arg = struct {
 	tag: enum {
-		inclusion, exclusion, optional
+		unique, inclusion, exclusion, optional
 	},
 	name: Token,
 	pattern: Pattern
@@ -335,6 +335,20 @@ pub fn skip_whitespace(tokens: []Token, token_index: *u64) !void {
 }
 
 pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) ParseError!Arg {
+	if (tokens[token_index.*].tag == .UNIQUE){
+		token_index.* += 1;
+		if (tokens[token_index.*].tag != .IDENTIFIER){
+			std.debug.print("Expected identifier for unique name, found {s}\n", .{tokens[token_index.*].text});
+			return ParseError.UnexpectedToken;
+		}
+		const arg = Arg {
+			.tag = .unique,
+			.name = tokens[token_index.*],
+			.pattern=Pattern.token
+		};
+		token_index.* += 1;
+		return arg;
+	}
 	if (tokens[token_index.*].tag == .IDENTIFIER){
 		const arg = Arg {
 			.tag = .inclusion,
@@ -562,3 +576,5 @@ pub fn show_arg(arg: Arg) void {
 		}
 	}
 }
+
+//TODO parse program text with bind rules after current parse section, apply replacement, feed that replaced buffer to next parser
