@@ -797,24 +797,24 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 		const blocks = block_binds(mem, program, precedence);
 		if (blocks.items.len == 0){
 			precedence -= 1;
+			if (precedence <= '0'){
+				const stream = program.text;
+				program.text = new;
+				return stream;
+			}
 			continue;
 		}
 		new.clearRetainingCapacity();
 		var i: u64 = 0;
 		var token_index:u64 = 0;
-		while (i < blocks.items.len-1){
-			const current = blocks.items[i];
-			const next = blocks.items[i+1];
+		if (blocks.items.len == 1){
+			const current = blocks.items[0];
 			while (token_index < current.start_index){
 				new.append(program.text.items[token_index])
 					catch unreachable;
 				token_index += 1;
 			}
 			token_index = current.end_index + 1;
-			var adjust = false;
-			if (current.end_index > next.start_index and current.end_index < next.end_index){
-				adjust = true;
-			}
 			outer: for (current.bind.text.items) |*token| {
 				for (current.expansions.items) |*arg|{
 					if (token_equal(token, &arg.name.name)){
@@ -840,16 +840,57 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 				new.append(token.*)
 					catch unreachable;
 			}
-			if (adjust == true){
-				reparse = true;
-				while (token_index < program.text.items.len){
+		}
+		else{
+			while (i < blocks.items.len-1){
+				const current = blocks.items[i];
+				const next = blocks.items[i+1];
+				while (token_index < current.start_index){
 					new.append(program.text.items[token_index])
 						catch unreachable;
 					token_index += 1;
 				}
-				break;
+				token_index = current.end_index + 1;
+				var adjust = false;
+				if (current.end_index > next.start_index and current.end_index < next.end_index){
+					adjust = true;
+				}
+				outer: for (current.bind.text.items) |*token| {
+					for (current.expansions.items) |*arg|{
+						if (token_equal(token, &arg.name.name)){
+							if (arg.name.pattern == Pattern.alternate){
+								//TODO
+								continue :outer;
+							}
+							if (arg.name.pattern == Pattern.variadic){
+								//TODO
+								continue :outer;
+							}
+							if (arg.name.tag == .unique){
+								//TODO
+								continue :outer;
+							}
+							for (arg.expansion) |*tok| {
+								new.append(tok.*)
+									catch unreachable;
+							}
+							continue :outer;
+						}
+					}
+					new.append(token.*)
+						catch unreachable;
+				}
+				if (adjust == true){
+					reparse = true;
+					while (token_index < program.text.items.len){
+						new.append(program.text.items[token_index])
+							catch unreachable;
+						token_index += 1;
+					}
+					break;
+				}
+				i += 1;
 			}
-			i += 1;
 		}
 		program.text = new;
 		if (new == aux){
@@ -861,15 +902,15 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 		if (reparse == false){
 			precedence -= 1;
 		}
+		if (precedence <= '0'){
+			const stream = program.text;
+			program.text = new;
+			return stream;
+		}
 	}
-	const stream = program.text;
-	program.text = new;
-	return stream;
+	unreachable;
 }
 
 pub fn token_equal(a: *Token, b: *Token) bool {
-	if (a.tag != b.tag){
-		return false;
-	}
 	return std.mem.eql(u8, a.text, b.text);
 }
