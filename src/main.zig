@@ -1045,6 +1045,7 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 				new.append(tok.*)
 					catch unreachable;
 			}
+			continue :outer;
 		}
 		new.append(token.*)
 			catch unreachable;
