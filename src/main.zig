@@ -887,6 +887,20 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 				}
 				i += 1;
 			}
+			const current = blocks.items[i];
+			while (token_index < current.start_index){
+				new.append(program.text.items[token_index])
+					catch unreachable;
+				token_index += 1;
+			}
+			token_index = current.end_index + 1;
+			var stack = Buffer(*ArgTree).init(mem.*);
+			_ = try rewrite(current, new, 0, false, false, &stack);
+		}
+		while (token_index < program.text.items.len){
+			new.append(program.text.items[token_index])
+				catch unreachable;
+			token_index += 1;
 		}
 		program.text = new;
 		if (new == aux){
