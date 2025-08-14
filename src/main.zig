@@ -421,7 +421,7 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 		arg.tag = .optional; 
 	}
 	else if (tokens[token_index.*].tag != .ARGUMENT){
-		std.debug.print("Expected either - ? or + to head non keyword argument, found {s}\n", .{tokens[token_index.*].text});
+		std.debug.print("Expected either - ? or + to head non keyword argument, found {} {s}\n", .{tokens[token_index.*].tag, tokens[token_index.*].text});
 		return ParseError.UnexpectedToken;
 	}
 	token_index.* += 1;
@@ -1019,14 +1019,13 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 								stack.append(iter_arg)
 									catch unreachable;
 							}
-							index = try rewrite(current, new, save_index, true, false, stack);
-							std.debug.assert(current.bind.text.items[index].tag == .CLOSE_BRACE);
+							index = try rewrite(current, new, save_index+1, true, false, stack);
+							std.debug.assert(current.bind.text.items.len == index);
 							for (iter.nodes.items) |_| {
 								_ = stack.pop();
 							}
 						}
-						std.debug.assert(current.bind.text.items[index].tag == .CLOSE_BRACE);
-						index += 1;
+						std.debug.assert(current.bind.text.items.len == index);
 						continue :outer;
 					}
 				}
