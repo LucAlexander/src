@@ -869,7 +869,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 						catch unreachable;
 					token_index += 1;
 				}
-				token_index = current.end_index + 1;
+				token_index = current.end_index;
 				var adjust = false;
 				if (current.end_index > next.start_index and current.end_index < next.end_index){
 					adjust = true;
@@ -887,15 +887,17 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 				}
 				i += 1;
 			}
-			const current = blocks.items[i];
-			while (token_index < current.start_index){
-				new.append(program.text.items[token_index])
-					catch unreachable;
-				token_index += 1;
+			if (reparse == false){
+				const current = blocks.items[i];
+				while (token_index < current.start_index){
+					new.append(program.text.items[token_index])
+						catch unreachable;
+					token_index += 1;
+				}
+				token_index = current.end_index;
+				var stack = Buffer(*ArgTree).init(mem.*);
+				_ = try rewrite(current, new, 0, false, false, &stack);
 			}
-			token_index = current.end_index + 1;
-			var stack = Buffer(*ArgTree).init(mem.*);
-			_ = try rewrite(current, new, 0, false, false, &stack);
 		}
 		while (token_index < program.text.items.len){
 			new.append(program.text.items[token_index])
