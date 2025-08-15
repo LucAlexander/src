@@ -955,6 +955,7 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 				if (nest_depth == 0){
 					return index;
 				}
+				nest_depth -= 1;
 			}
 			if (token.tag == .OPEN_BRACE){
 				nest_depth += 1;
@@ -1034,12 +1035,12 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 									catch unreachable;
 							}
 							index = try rewrite(current, new, save_index+1, true, false, stack);
-							std.debug.assert(current.bind.text.items.len == index);
+							std.debug.assert(current.bind.text.items.len-1 == index);
 							for (iter.nodes.items) |_| {
 								_ = stack.pop();
 							}
 						}
-						std.debug.assert(current.bind.text.items.len == index);
+						std.debug.assert(current.bind.text.items.len-1 == index);
 						continue :outer;
 					}
 				}
