@@ -489,6 +489,8 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 				if (tokens[token_index.*].tag == .CLOSE_BRACK){
 					token_index.* += 1;
 					try skip_whitespace(tokens, token_index);
+					pattern.alternate.append(list)
+						catch unreachable;
 					break :blk;
 				}
 			}
@@ -598,8 +600,8 @@ pub fn show_arg(arg: Arg) void {
 		.alternate => {
 			std.debug.print("[\n", .{});
 			for (arg.pattern.alternate.items) |*list| {
+				std.debug.print("| ", .{});
 				for (list.items) |inner| {
-					std.debug.print("| ", .{});
 					show_arg(inner.*);
 					std.debug.print("\n", .{});
 				}
@@ -979,6 +981,7 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 						defer for (arg.nodes.items) |_| {
 							_ = stack.pop();
 						};
+						index += 2;
 						for (0..arg.alternate) |_| {
 							var depth: u64 = 0;
 							while (index < current.bind.text.items.len) : (index += 1){
