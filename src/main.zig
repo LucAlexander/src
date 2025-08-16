@@ -904,7 +904,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 			}
 			token_index = current.end_index;
 			var stack = Buffer(*ArgTree).init(mem.*);
-			_ = try rewrite(current, new, 0, false, false, &stack);
+			_ = try rewrite(mem, current, new, 0, false, false, &stack);
 		}
 		else{
 			while (i < blocks.items.len-1){
@@ -921,7 +921,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 					adjust = true;
 				}
 				var stack = Buffer(*ArgTree).init(mem.*);
-				_ = try rewrite(current, new, 0, false, false, &stack);
+				_ = try rewrite(mem, current, new, 0, false, false, &stack);
 				if (adjust == true){
 					reparse = true;
 					while (token_index < program.text.items.len){
@@ -942,7 +942,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 				}
 				token_index = current.end_index;
 				var stack = Buffer(*ArgTree).init(mem.*);
-				_ = try rewrite(current, new, 0, false, false, &stack);
+				_ = try rewrite(mem, current, new, 0, false, false, &stack);
 			}
 		}
 		while (token_index < program.text.items.len){
@@ -973,7 +973,7 @@ pub fn token_equal(a: *Token, b: *Token) bool {
 	return std.mem.eql(u8, a.text, b.text);
 }
 
-pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
+pub fn rewrite(mem: *const std.mem.Allocator, current: AppliedBind, new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
 	for (current.expansions.items) |applied| {
 		stack.append(applied)
 			catch unreachable;
@@ -1007,6 +1007,26 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 			}
 			if (token.tag == .OPEN_BRACE){
 				nest_depth += 1;
+			}
+		}
+		if (token.tag == .CONCAT){
+			const left = new.items[new.items.len-1].text;
+			if (index+1 < current.bind.text.items.len){
+				const right = current.bind.text.items[index+1].text;
+				const concat = mem.alloc(u8, left.len+right.len)
+					catch unreachable;
+				var i:u64 = 0;
+				while (i < left.len){
+					concat[i] = left[i];
+					i += 1;
+				}
+				while ((i-left.len) < right.len){
+					concat[i] = right[i-left.len];
+					i += 1;
+				}
+				new.items[new.items.len-1] = Token{.tag=.IDENTIFIER, .text=concat};
+				index += 1;
+				continue :outer;
 			}
 		}
 		if (current.uniques.get(token.text)) |id| {
@@ -1054,7 +1074,7 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 								}
 							}
 						}
-						index = try rewrite(current, new, index, false, true, stack);
+						index = try rewrite(mem, current, new, index, false, true, stack);
 						var depth: u64 = 0;
 						while (index < current.bind.text.items.len) : (index += 1){
 							if (current.bind.text.items[index].tag == .OPEN_BRACK){
@@ -1087,7 +1107,7 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 								stack.append(iter_arg)
 									catch unreachable;
 							}
-							index = try rewrite(current, new, save_index+1, true, false, stack);
+							index = try rewrite(mem, current, new, save_index+1, true, false, stack);
 							std.debug.assert(current.bind.text.items.len-1 == index);
 							for (iter.nodes.items) |_| {
 								_ = stack.pop();
