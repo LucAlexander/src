@@ -1,6 +1,8 @@
 const std = @import("std");
 const Buffer = std.ArrayList;
 
+const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
 pub fn main() !void {
 	const allocator = std.heap.page_allocator;
 	var infile = try std.fs.cwd().openFile("test.src", .{});
@@ -142,6 +144,7 @@ const ArgTree = struct {
 const AppliedBind = struct {
 	bind: *Bind,
 	expansions: Buffer(*ArgTree),
+	uniques: std.StringHashMap([]u8),
 	start_index: u64,
 	end_index: u64
 };
@@ -371,7 +374,7 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 			.tag = .unique,
 			.name = tokens[token_index.*],
 			.pattern=Pattern{
-				.alternate=Buffer(Buffer(*Arg)).init(mem.*)
+				.keyword=tokens[token_index.*]
 			}
 		};
 		var inner = Buffer(*Arg).init(mem.*);
@@ -636,23 +639,27 @@ const PatternError = error {
 	ExclusionPresent
 };
 
-pub fn apply_rule(mem: *const std.mem.Allocator, rule: *Arg, tokens: []Token, token_index: u64, var_depth: u64) PatternError!?*ArgTree{
+pub fn apply_rule(mem: *const std.mem.Allocator, uniques: *std.StringHashMap([]u8), rule: *Arg, tokens: []Token, token_index: u64, var_depth: u64) PatternError!?*ArgTree{
 	switch (rule.tag){
 		.unique => {
-			std.debug.assert(rule.pattern == Pattern.alternate);
-			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth);
+			std.debug.assert(rule.pattern == Pattern.keyword);
+			//if (uniques.get(rule.name.text) == null) {
+				//uniques.put(rule.name.text, new_uid(mem))
+					//catch unreachable;
+			//}
+			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth, uniques);
 		},
 		.inclusion => {
-			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth);
+			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth, uniques);
 		},
 		.exclusion => {
-			_ = apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth) catch {
+			_ = apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth, uniques) catch {
 				return null;
 			};
 			return PatternError.ExclusionPresent;
 		},
 		.optional => {
-			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth) catch {
+			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth, uniques) catch {
 				return null;
 			};
 		}
@@ -660,7 +667,7 @@ pub fn apply_rule(mem: *const std.mem.Allocator, rule: *Arg, tokens: []Token, to
 	unreachable;
 }
 
-pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern, tokens: []Token, token_index: u64, var_depth: u64) PatternError!*ArgTree {
+pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern, tokens: []Token, token_index: u64, var_depth: u64, uniques: *std.StringHashMap([]u8)) PatternError!*ArgTree {
 	switch (pattern.*){
 		.token => {
 			return ArgTree.init(mem, name, tokens[token_index..token_index+1]);
@@ -676,7 +683,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 			blk: for (pattern.alternate.items, 0..) |*seqlist, alt| {
 				var temp_index = token_index;
 				for (seqlist.items) |arg| {
-					const sequence = apply_rule(mem, arg, tokens, temp_index, var_depth) catch {
+					const sequence = apply_rule(mem, uniques, arg, tokens, temp_index, var_depth) catch {
 						list.clearRetainingCapacity();
 						continue :blk;
 					};
@@ -696,7 +703,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 		},
 		.group => {
 			var list = Buffer(*ArgTree).init(mem.*);
-			const open_sequence = try apply_rule(mem, pattern.group.open, tokens, token_index, var_depth);
+			const open_sequence = try apply_rule(mem, uniques, pattern.group.open, tokens, token_index, var_depth);
 			var temp_index = token_index;
 			if (open_sequence) |seq| {
 				std.debug.assert(seq.expansion != null);
@@ -705,7 +712,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 				temp_index += seq.expansion.?.len;
 			}
 			while (temp_index < tokens.len){
-				const close_sequence = apply_rule(mem, pattern.group.close, tokens, temp_index, var_depth) catch {
+				const close_sequence = apply_rule(mem, uniques, pattern.group.close, tokens, temp_index, var_depth) catch {
 					temp_index += 1;
 					continue;
 				};
@@ -730,7 +737,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 				const save_index = temp_index;
 				var sublist = Buffer(*ArgTree).init(mem.*);
 				for (pattern.variadic.members.items) |arg| {
-					const sequence = apply_rule(mem, arg, tokens, temp_index, var_depth+1) catch |err| {
+					const sequence = apply_rule(mem, uniques, arg, tokens, temp_index, var_depth+1) catch |err| {
 						if (times == 0){
 							return err;
 						}
@@ -753,7 +760,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 					}
 				}
 				std.debug.assert(pattern.variadic.separator != null);
-				const sep_sequence = apply_rule(mem, pattern.variadic.separator.?, tokens, temp_index, var_depth+1) catch {
+				const sep_sequence = apply_rule(mem, uniques, pattern.variadic.separator.?, tokens, temp_index, var_depth+1) catch {
 					superlist.append(sublist)
 						catch unreachable;
 					const tree = ArgTree.init(mem, name, tokens[token_index..temp_index]);
@@ -783,8 +790,9 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, token_index: *u64) ?AppliedBind {
 	const save_index = token_index.*;
 	var list = Buffer(*ArgTree).init(mem.*);
+	var uniques = std.StringHashMap([]u8).init(mem.*);
 	for (bind.args.items) |*arg| {
-		const sequence = apply_rule(mem, arg, tokens, token_index.*, 0) catch {
+		const sequence = apply_rule(mem, &uniques, arg, tokens, token_index.*, 0) catch {
 			token_index.* = save_index;
 			return null;
 		};
@@ -798,6 +806,7 @@ pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, t
 	return AppliedBind{
 		.bind = bind,
 		.expansions=list,
+		.uniques=uniques,
 		.start_index = save_index,
 		.end_index = token_index.*
 	};
@@ -965,6 +974,11 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 				nest_depth += 1;
 			}
 		}
+		//if (current.uniques.get(token.text)) |id| {
+			//new.append(Token{.text=id, .tag=.IDENTIFIER})
+				//catch unreachable;
+			//continue :outer;
+		//}
 		var arg_index: u64 = 0;
 		while (arg_index < stack.items.len) : (arg_index += 1){
 			const arg = stack.items[arg_index];
@@ -1014,7 +1028,6 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 							}
 							if (current.bind.text.items[index].tag == .CLOSE_BRACK){
 								if (depth == 0){
-									index += 1;
 									break;
 								}
 								depth -= 1;
@@ -1057,7 +1070,10 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 				continue :outer;
 			}
 			if (arg.arg.tag == .unique){
-				//TODO fill with unique identifier
+				//const id = current.uniques.get(arg.arg.name.text);
+				//std.debug.assert(id != null);
+				//new.append(Token{.text=id.?, .tag=.IDENTIFIER})
+					//catch unreachable;
 				continue :outer;
 			}
 			std.debug.assert(arg.expansion != null);
@@ -1071,4 +1087,27 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 			catch unreachable;
 	}
 	return index;
+}
+
+pub fn new_uid(mem: *const std.mem.Allocator) []u8 {
+	var new = mem.alloc(u8, uid.len) catch unreachable;
+	var i:u64 = 0;
+	var inc:bool = false;
+	while (i < new.len) {
+		if (uid[i] < 'Z'){
+			new[i] = uid[i]+1;
+			break;
+		}
+		new[i] = 'A';
+		inc = true;
+		i += 1;
+	}
+	if (inc){
+		new[i] = uid[i]+1;
+	}
+	while (i < new.len){
+		new[i] = uid[i];
+		i += 1;
+	}
+	return new;
 }
