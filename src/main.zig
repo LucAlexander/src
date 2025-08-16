@@ -410,7 +410,10 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 		token_index.* += 1;
 		return arg;
 	}
-	if (tokens[token_index.*].tag == .IDENTIFIER){
+	if (tokens[token_index.*].tag == .IDENTIFIER or
+		tokens[token_index.*].tag == .WHITESPACE or
+		tokens[token_index.*].tag == .CONCAT or
+		tokens[token_index.*].tag == .LINE_END){
 		const arg = Arg {
 			.tag = .inclusion,
 			.name=tokens[token_index.*],
