@@ -227,8 +227,8 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 		}
 		var size: u64 = 1;
 		const keyword = blk:{
-			if (std.ascii.isAlphanumeric(c)){
-				while (i+size < text.len and std.ascii.isAlphanumeric(text[i+size])){
+			if (std.ascii.isAlphanumeric(c) or c == '_'){
+				while (i+size < text.len and (text[i+size] == '_' or std.ascii.isAlphanumeric(text[i+size]))){
 					size += 1;
 				}
 				break :blk text[i..i+size];
@@ -643,11 +643,11 @@ pub fn apply_rule(mem: *const std.mem.Allocator, uniques: *std.StringHashMap([]u
 	switch (rule.tag){
 		.unique => {
 			std.debug.assert(rule.pattern == Pattern.keyword);
-			//if (uniques.get(rule.name.text) == null) {
-				//uniques.put(rule.name.text, new_uid(mem))
-					//catch unreachable;
-			//}
-			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth, uniques);
+			if (uniques.get(rule.name.text) == null){
+				uniques.put(rule.name.text, new_uid(mem))
+					catch unreachable;
+			}
+			return null;
 		},
 		.inclusion => {
 			return apply_pattern(mem, rule.*, &rule.pattern, tokens, token_index, var_depth, uniques);
@@ -867,7 +867,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 					catch unreachable;
 				token_index += 1;
 			}
-			token_index = current.end_index + 1;
+			token_index = current.end_index;
 			var stack = Buffer(*ArgTree).init(mem.*);
 			_ = try rewrite(current, new, 0, false, false, &stack);
 		}
@@ -974,11 +974,11 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 				nest_depth += 1;
 			}
 		}
-		//if (current.uniques.get(token.text)) |id| {
-			//new.append(Token{.text=id, .tag=.IDENTIFIER})
-				//catch unreachable;
-			//continue :outer;
-		//}
+		if (current.uniques.get(token.text)) |id| {
+			new.append(Token{.tag=.IDENTIFIER, .text=id})
+				catch unreachable;
+			continue :outer;
+		}
 		var arg_index: u64 = 0;
 		while (arg_index < stack.items.len) : (arg_index += 1){
 			const arg = stack.items[arg_index];
@@ -1070,10 +1070,7 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 				continue :outer;
 			}
 			if (arg.arg.tag == .unique){
-				//const id = current.uniques.get(arg.arg.name.text);
-				//std.debug.assert(id != null);
-				//new.append(Token{.text=id.?, .tag=.IDENTIFIER})
-					//catch unreachable;
+				//done in pass after
 				continue :outer;
 			}
 			std.debug.assert(arg.expansion != null);
