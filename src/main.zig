@@ -43,10 +43,18 @@ pub fn main() !void {
 		if (done){
 			break;
 		}
-		token_stream = apply_binds(&mem, &text, &auxil, &program) catch |err| {
-			std.debug.print("Parse Error {}\n", .{err});
-			return;
-		};
+		if (program.text == &text){
+			token_stream = apply_binds(&mem, &text, &auxil, &program) catch |err| {
+				std.debug.print("Parse Error {}\n", .{err});
+				return;
+			};
+		}
+		else {
+			token_stream = apply_binds(&mem, &auxil, &text, &program) catch |err| {
+				std.debug.print("Parse Error {}\n", .{err});
+				return;
+			};
+		}
 		show_tokens(token_stream.*);
 		std.debug.print("applied binds-------------------\n", .{});
 	}
@@ -79,7 +87,7 @@ const TOKEN = enum {
 	JZ, JNZ, JEQ, JNE,
 	INT,
 	IP, R0, R1, R2, R3,
-	SPACE, NEW_LINE, TAB,
+	SPACE, NEW_LINE, TAB, CONCAT,
 	LINE_START, LINE_END
 };
 
@@ -207,6 +215,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				'?' => {break :blk .OPTIONAL;},
 				'$' => {break :blk .LINE_START;},
 				'^' => {break :blk .LINE_END;},
+				'#' => {break :blk .CONCAT;},
 				'@' => {break :blk .UNIQUE;},
 				';' => {break :blk .HOIST;},
 				':' => {break :blk .IS_OF;},
@@ -636,7 +645,8 @@ pub fn show_arg(arg: Arg) void {
 const PatternError = error {
 	MissingKeyword,
 	ExhaustedAlternate,
-	ExclusionPresent
+	ExclusionPresent,
+	UnexpectedEOF
 };
 
 pub fn apply_rule(mem: *const std.mem.Allocator, uniques: *std.StringHashMap([]u8), rule: *Arg, tokens: []Token, token_index: u64, var_depth: u64) PatternError!?*ArgTree{
@@ -670,11 +680,19 @@ pub fn apply_rule(mem: *const std.mem.Allocator, uniques: *std.StringHashMap([]u
 pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern, tokens: []Token, token_index: u64, var_depth: u64, uniques: *std.StringHashMap([]u8)) PatternError!*ArgTree {
 	switch (pattern.*){
 		.token => {
-			return ArgTree.init(mem, name, tokens[token_index..token_index+1]);
+			const new_index = apply_whitespace(token_index, tokens);
+			if (new_index >= tokens.len){
+				return PatternError.UnexpectedEOF; 
+			}
+			return ArgTree.init(mem, name, tokens[token_index..new_index+1]);
 		},
 		.keyword => {
-			if (token_equal(&tokens[token_index], &pattern.keyword)){
-				return ArgTree.init(mem, name, tokens[token_index..token_index+1]);
+			const new_index = apply_whitespace(token_index, tokens);
+			if (new_index >= tokens.len){
+				return PatternError.UnexpectedEOF; 
+			}
+			if (token_equal(&tokens[new_index], &pattern.keyword)){
+				return ArgTree.init(mem, name, tokens[token_index..new_index+1]);
 			}
 			return PatternError.MissingKeyword;
 		},
@@ -1070,7 +1088,6 @@ pub fn rewrite(current: AppliedBind, new: *Buffer(Token), input_index: u64, varn
 				continue :outer;
 			}
 			if (arg.arg.tag == .unique){
-				//done in pass after
 				continue :outer;
 			}
 			std.debug.assert(arg.expansion != null);
@@ -1108,3 +1125,24 @@ pub fn new_uid(mem: *const std.mem.Allocator) []u8 {
 	}
 	return new;
 }
+
+pub fn apply_whitespace(input_index: u64, tokens: []Token) u64 {
+	var token_index = input_index;
+	while (token_index < tokens.len){
+		if (tokens[token_index].tag == .SPACE){
+			token_index += 1;
+			continue;
+		}
+		if (tokens[token_index].tag == .TAB){
+			token_index += 1;
+			continue;
+		}
+		if (tokens[token_index].tag == .NEW_LINE){
+			token_index += 1;
+			continue;
+		}
+		break;
+	}
+	return token_index;
+}
+
