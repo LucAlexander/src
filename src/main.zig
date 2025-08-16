@@ -88,7 +88,7 @@ const TOKEN = enum {
 	INT,
 	IP, R0, R1, R2, R3,
 	SPACE, NEW_LINE, TAB, CONCAT,
-	LINE_START, LINE_END
+	LINE_END, WHITESPACE
 };
 
 const Token = struct {
@@ -213,9 +213,9 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				']' => {break :blk .CLOSE_BRACK;},
 				'|' => {break :blk .ALTERNATE;},
 				'?' => {break :blk .OPTIONAL;},
-				'$' => {break :blk .LINE_START;},
-				'^' => {break :blk .LINE_END;},
+				'$' => {break :blk .LINE_END;},
 				'#' => {break :blk .CONCAT;},
+				'%' => {break :blk .WHITESPACE;},
 				'@' => {break :blk .UNIQUE;},
 				';' => {break :blk .HOIST;},
 				':' => {break :blk .IS_OF;},
@@ -687,6 +687,20 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 			return ArgTree.init(mem, name, tokens[token_index..new_index+1]);
 		},
 		.keyword => {
+			if (pattern.keyword.tag == .LINE_END){
+				if (tokens[token_index].tag == .NEW_LINE){
+					return ArgTree.init(mem, name, tokens[token_index..token_index+1]);
+				}
+				return PatternError.MissingKeyword;
+			}
+			if (pattern.keyword.tag == .WHITESPACE){
+				if (tokens[token_index].tag == .NEW_LINE or
+					tokens[token_index].tag == .SPACE or
+					tokens[token_index].tag == .TAB){
+					return ArgTree.init(mem, name, tokens[token_index..token_index+1]);
+				}
+				return PatternError.MissingKeyword;
+			}
 			const new_index = apply_whitespace(token_index, tokens);
 			if (new_index >= tokens.len){
 				return PatternError.UnexpectedEOF; 
