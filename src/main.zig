@@ -165,6 +165,8 @@ const Bind = struct {
 	},
 	precedence: u8,
 	args: Buffer(Arg),
+	hoist: Buffer(Token),
+	hoist_token: ?Token,
 	text: Buffer(Token)
 };
 
@@ -338,6 +340,8 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 		.tag = .rewrite,
 		.precedence=0,
 		.args=Buffer(Arg).init(mem.*),
+		.hoist=Buffer(Token).init(mem.*),
+		.hoist_token=null,
 		.text=Buffer(Token).init(mem.*)
 	};
 	if (tokens[token_index.*].tag == .BIND_COMP){
@@ -389,7 +393,37 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 		return ParseError.PrematureEnd;
 	}
 	token_index.* += 1;
+	try split_hoist(&bind);
 	return bind;
+}
+
+pub fn split_hoist(bind: *Bind) ParseError!void {
+	var last = bind.text.items[0];
+	for (bind.text.items, 0..) |tok, i| {
+		if (tok.tag == .HOIST){
+			if (i == 0){
+				std.debug.print("Required hoist token to hoist", .{});
+				return ParseError.UnexpectedToken;
+			}
+			bind.hoist_token = last;
+			var index: u64 = 0;
+			while (index < i-1){
+				bind.hoist.append(bind.text.items[index])
+					catch unreachable;
+				index += 1;
+			}
+			index += 2;
+			var offset: u64 = 0;
+			while (index < bind.text.items.len) {
+				bind.text.items[offset] = bind.text.items[index];
+				index += 1;
+				offset += 1;
+			}
+			bind.text.items.len = offset;
+			return;
+		}
+		last = tok;
+	}
 }
 
 pub fn skip_whitespace(tokens: []Token, token_index: *u64) ParseError!void {
@@ -640,6 +674,10 @@ pub fn show_program(program: ProgramText) void {
 			std.debug.print("\n", .{});
 		}
 		std.debug.print("expansion:\n", .{});
+		if (bind.hoist_token) |_| {
+			show_tokens(bind.hoist);
+			std.debug.print(";\n", .{});
+		}
 		show_tokens(bind.text);
 	}
 	std.debug.print("end binds ----------\n", .{});
@@ -1445,5 +1483,4 @@ pub fn show_location(loc: *Location) void {
 	}
 }
 
-//TODO I think compile binds dont work and I forget where I left off with them, forget about pattern binds they might be unnecessary though who knows at this point, theres a hook for the metaprogram loop to run at the compile time bind end but I dont know if the compile time token is even generated
 //TODO hoisting to closest token
