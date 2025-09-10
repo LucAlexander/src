@@ -30,7 +30,7 @@ var vm: VM = VM.init();
 
 pub fn main() !void {
 	const allocator = std.heap.page_allocator;
-	var infile = try std.fs.cwd().openFile("test.src", .{});
+	var infile = try std.fs.cwd().openFile("bytecode.src", .{});
 	defer infile.close();
 	const stat = try infile.stat();
 	const contents = try infile.readToEndAlloc(allocator, stat.size+1);
@@ -94,8 +94,7 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 		std.debug.print("Bytecode Parse Error {}\n", .{err});
 		return;
 	};
-	for (instructions.items) |_| {
-	}
+	show_instructions(instructions);
 	//TODO run
 }
 
@@ -391,7 +390,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 	return bind;
 }
 
-pub fn skip_whitespace(tokens: []Token, token_index: *u64) !void {
+pub fn skip_whitespace(tokens: []Token, token_index: *u64) ParseError!void {
 	while (token_index.* < tokens.len){
 		if (tokens[token_index.*].tag == .SPACE){
 			token_index.* += 1;
@@ -1259,6 +1258,13 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 	var ops = Buffer(Instruction).init(mem.*);
 	var token_index: u64 = 0;
 	while (token_index < tokens.items.len){
+		skip_whitespace(tokens.items, &token_index) catch {
+			return ops;
+		};
+		if (token_index > tokens.items.len){
+			std.debug.print("Expected opcode, found end of file\n", .{});
+			return ParseError.UnexpectedEOF;
+		}
 		const token = tokens.items[token_index];
 		token_index += 1;
 		switch (token.tag){
@@ -1328,6 +1334,7 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 	}
 	const token = tokens.items[token_index.*];
 	if (token.tag == .OPEN_BRACK){
+		token_index.* += 1;
 		const reference = try parse_location(mem, tokens, token_index);
 		const location = mem.create(Location) catch
 			unreachable;
@@ -1343,11 +1350,13 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 	}
 	switch (token.tag){
 		.R0, .R1, .R2, .R3 => {
+			token_index.* += 1;
 			return Location{
 				.register=token.tag
 			};
 		},
 		.IDENTIFIER => {
+			token_index.* += 1;
 			return hash_global_enum(token);
 		},
 		else => {
@@ -1371,5 +1380,58 @@ pub fn hash_global_enum(token: Token) Location {
 	};
 }
 
+pub fn show_instructions(instructions: Buffer(Instruction)) void {
+	for (instructions.items) |*inst| {
+		switch (inst.*){
+			.move => {
+				std.debug.print("mov ", .{});
+				show_location(&inst.move.dest);
+				show_location(&inst.move.src);
+				std.debug.print("\n", .{});
+			},
+			.compare => {
+				std.debug.print("cmp ", .{});
+				show_location(&inst.compare.left);
+				show_location(&inst.compare.right);
+				std.debug.print("\n", .{});
+			},
+			.alu => {
+				std.debug.print("{} ", .{inst.alu.tag});
+				show_location(&inst.alu.dest);
+				show_location(&inst.alu.left);
+				show_location(&inst.alu.right);
+				std.debug.print("\n", .{});
+			},
+			.jump => {
+				std.debug.print("{} ", .{inst.jump.tag});
+				show_location(&inst.jump.dest);
+				std.debug.print("\n", .{});
+			},
+			.interrupt => {
+				std.debug.print("int\n", .{});
+			}
+		}
+	}
+}
 
+pub fn show_location(loc: *Location) void {
+	switch (loc.*){
+		.immediate => {
+			std.debug.print("{} ", .{loc.immediate});
+		},
+		.literal => {
+			std.debug.print("{} ", .{loc.literal});
+		},
+		.register => {
+			std.debug.print("{} ", .{loc.register});
+		},
+		.dereference => {
+			std.debug.print("[", .{});
+			show_location(loc.dereference);
+			std.debug.print("] ", .{});
+		}
+	}
+}
+
+//TODO immediate literals
 //TODO hoisting to closest token
