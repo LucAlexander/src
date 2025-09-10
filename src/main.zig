@@ -119,6 +119,7 @@ const TOKEN = enum {
 	UNIQUE,
 	HOIST,
 	MOV,
+	LIT,
 	ADD, SUB, MUL, DIV, CMP,
 	JMP,
 	JLT, JGT, JLE, JGE,
@@ -255,6 +256,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				'#' => {break :blk .CONCAT;},
 				'%' => {break :blk .WHITESPACE;},
 				'@' => {break :blk .UNIQUE;},
+				'!' => {break :blk .LIT;},
 				';' => {break :blk .HOIST;},
 				':' => {break :blk .IS_OF;},
 				'+' => {break :blk .ARGUMENT;},
@@ -1332,7 +1334,7 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 		std.debug.print("Expected operand for instruction, found end of file\n", .{});
 		return ParseError.UnexpectedEOF;
 	}
-	const token = tokens.items[token_index.*];
+	var token = tokens.items[token_index.*];
 	if (token.tag == .OPEN_BRACK){
 		token_index.* += 1;
 		const reference = try parse_location(mem, tokens, token_index);
@@ -1357,7 +1359,21 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 		},
 		.IDENTIFIER => {
 			token_index.* += 1;
-			return hash_global_enum(token);
+			return Location{
+				.literal = hash_global_enum(token)
+			};
+		},
+		.LIT => {
+			token_index.* += 1;
+			token = tokens.items[token_index.*];
+			token_index.* += 1;
+			if (token.tag != .IDENTIFIER) {
+				std.debug.print("Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
+				return ParseError.UnexpectedToken;
+			}
+			return Location{
+				.immediate = hash_global_enum(token)
+			};
 		},
 		else => {
 			std.debug.print("Expected operand, found {s}\n", .{token.text});
@@ -1366,18 +1382,14 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 	}
 }
 
-pub fn hash_global_enum(token: Token) Location {
+pub fn hash_global_enum(token: Token) u64 {
 	if (iden_hashes.get(token.text)) |id| {
-		return Location{
-			.literal = id
-		};
+		return id;
 	}
 	iden_hashes.put(token.text, current_iden)
 		catch unreachable;
 	current_iden += 1;
-	return Location{
-		.literal = current_iden-1
-	};
+	return current_iden-1;
 }
 
 pub fn show_instructions(instructions: Buffer(Instruction)) void {
@@ -1417,7 +1429,7 @@ pub fn show_instructions(instructions: Buffer(Instruction)) void {
 pub fn show_location(loc: *Location) void {
 	switch (loc.*){
 		.immediate => {
-			std.debug.print("{} ", .{loc.immediate});
+			std.debug.print("!{} ", .{loc.immediate});
 		},
 		.literal => {
 			std.debug.print("{} ", .{loc.literal});
@@ -1433,5 +1445,5 @@ pub fn show_location(loc: *Location) void {
 	}
 }
 
-//TODO immediate literals
+//TODO I think compile binds dont work and I forget where I left off with them, forget about pattern binds they might be unnecessary though who knows at this point, theres a hook for the metaprogram loop to run at the compile time bind end but I dont know if the compile time token is even generated
 //TODO hoisting to closest token
