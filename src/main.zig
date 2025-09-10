@@ -2,13 +2,31 @@ const std = @import("std");
 const Buffer = std.ArrayList;
 
 const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-var vm: VM = VM{
-	.mem=undefined,
-	.r0=0,
-	.r1=0,
-	.r2=0,
-	.r3=0
+
+var iden_hashes = std.StringHashMap(u64).init(std.heap.page_allocator);
+var current_iden: u64 = 0;
+
+const VM = struct {
+	mem: [10000]u8,
+	r0: u64,
+	r1: u64,
+	r2: u64,
+	r3: u64,
+	sr: u64,
+	
+	pub fn init() VM {
+		return VM{
+			.mem=undefined,
+			.r0=0,
+			.r1=0,
+			.r2=0,
+			.r3=0,
+			.sr=0
+		};
+	}
 };
+
+var vm: VM = VM.init();
 
 pub fn main() !void {
 	const allocator = std.heap.page_allocator;
@@ -72,8 +90,13 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 		show_tokens(token_stream.*);
 		std.debug.print("applied binds-------------------\n", .{});
 	}
-	//TODO parse as program
-	//TODO parse
+	const instructions = parse_bytecode(mem, token_stream) catch |err| {
+		std.debug.print("Bytecode Parse Error {}\n", .{err});
+		return;
+	};
+	for (instructions.items) |_| {
+	}
+	//TODO run
 }
 
 const ParseError = error {
@@ -1202,10 +1225,151 @@ pub fn apply_whitespace(input_index: u64, tokens: []Token) u64 {
 	return token_index;
 }
 
-const VM = struct {
-	mem: []u8,
-	r0: u64,
-	r1: u64,
-	r2: u64,
-	r3: u64
+const Location = union(enum) {
+	immediate: u64,
+	literal: u64,
+	register: TOKEN,
+	dereference: *Location
 };
+
+const Instruction = union(enum) {
+	move: struct {
+		dest: Location,
+		src: Location
+	},
+	compare: struct {
+		left: Location,
+		right: Location
+	},
+	alu: struct {
+		tag: TOKEN,
+		dest: Location,
+		left: Location,
+		right: Location
+	},
+	jump: struct {
+		tag: TOKEN,
+		dest: Location
+	},
+	interrupt,
+
+};
+
+pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) ParseError!Buffer(Instruction) {
+	var ops = Buffer(Instruction).init(mem.*);
+	var token_index: u64 = 0;
+	while (token_index < tokens.items.len){
+		const token = tokens.items[token_index];
+		token_index += 1;
+		switch (token.tag){
+			.MOV => {
+				ops.append(
+					Instruction{
+						.move=.{
+							.dest=try parse_location(mem, tokens, &token_index),
+							.src=try parse_location(mem, tokens, &token_index)
+						}
+					}
+				) catch unreachable;
+			},
+			.ADD, .SUB, .MUL, .DIV => {
+				ops.append(
+					Instruction{
+						.alu=.{
+							.tag = token.tag,
+							.dest=try parse_location(mem, tokens, &token_index),
+							.left=try parse_location(mem, tokens, &token_index),
+							.right=try parse_location(mem, tokens, &token_index)
+						}
+					}
+				) catch unreachable;
+			},
+			.CMP => {
+				ops.append(
+					Instruction{
+						.compare=.{
+							.left=try parse_location(mem, tokens, &token_index),
+							.right=try parse_location(mem, tokens, &token_index)
+						}
+					}
+				) catch unreachable;
+			},
+			.JMP, .JLT, .JGT, .JLE, .JGE, .JZ, .JNZ, .JEQ, .JNE => {
+				ops.append(
+					Instruction{
+						.jump=.{
+							.tag=token.tag,
+							.dest=try parse_location(mem, tokens, &token_index)
+						}
+					}
+				) catch unreachable;
+			},
+			.INT => {
+				ops.append(
+					Instruction{
+						.interrupt={}
+					}
+				) catch unreachable;
+			},
+			else => {
+				std.debug.print("Expected opcode, found {s}\n", .{token.text});
+				return ParseError.UnexpectedToken;
+			}
+		}
+	}
+	return ops;
+}
+
+pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64) ParseError!Location {
+	try skip_whitespace(tokens.items, token_index);
+	if (token_index.* > tokens.items.len){
+		std.debug.print("Expected operand for instruction, found end of file\n", .{});
+		return ParseError.UnexpectedEOF;
+	}
+	const token = tokens.items[token_index.*];
+	if (token.tag == .OPEN_BRACK){
+		const reference = try parse_location(mem, tokens, token_index);
+		const location = mem.create(Location) catch
+			unreachable;
+		location.* = reference;
+		if (tokens.items[token_index.*].tag != .CLOSE_BRACK){
+			std.debug.print("Expected close bracket for dereferenced location\n", .{});
+			return ParseError.UnexpectedToken;
+		}
+		token_index.* += 1;
+		return Location{
+			.dereference=location
+		};
+	}
+	switch (token.tag){
+		.R0, .R1, .R2, .R3 => {
+			return Location{
+				.register=token.tag
+			};
+		},
+		.IDENTIFIER => {
+			return hash_global_enum(token);
+		},
+		else => {
+			std.debug.print("Expected operand, found {s}\n", .{token.text});
+			return ParseError.UnexpectedToken;
+		}
+	}
+}
+
+pub fn hash_global_enum(token: Token) Location {
+	if (iden_hashes.get(token.text)) |id| {
+		return Location{
+			.literal = id
+		};
+	}
+	iden_hashes.put(token.text, current_iden)
+		catch unreachable;
+	current_iden += 1;
+	return Location{
+		.literal = current_iden-1
+	};
+}
+
+
+//TODO hoisting to closest token
