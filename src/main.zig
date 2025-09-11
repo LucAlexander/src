@@ -59,36 +59,58 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 		.binds=binds
 	};
 	var token_stream = tokens;
-	var done = false;
 	var token_index: u64 = 0;
 	program.text=&text;
-	while (!done){
-		program.text.clearRetainingCapacity();
-		token_index = 0;
-		done = parse(mem, token_stream, &program, &token_index) catch |err| {
-			std.debug.print("Parse Error {}\n", .{err});
-			report_error(token_stream, token_index);
-			return;
-		};
-		show_program(program);
-		std.debug.print("parsed--------------------------\n", .{});
-		if (done){
-			break;
+	var redo = true;
+	while (redo){
+		var done = false;
+		while (!done){
+			program.text.clearRetainingCapacity();
+			token_index = 0;
+			done = parse(mem, token_stream, &program, &token_index) catch |err| {
+				std.debug.print("Parse Error {}\n", .{err});
+				report_error(token_stream, token_index);
+				return;
+			};
+			show_program(program);
+			std.debug.print("parsed--------------------------\n", .{});
+			if (done){
+				break;
+			}
+			if (program.text == &text){
+				token_stream = apply_binds(mem, &text, &auxil, &program) catch |err| {
+					std.debug.print("Parse Error {}\n", .{err});
+					return;
+				};
+			}
+			else {
+				token_stream = apply_binds(mem, &auxil, &text, &program) catch |err| {
+					std.debug.print("Parse Error {}\n", .{err});
+					return;
+				};
+			}
+			show_tokens(token_stream.*);
+			std.debug.print("applied binds-------------------\n", .{});
 		}
 		if (program.text == &text){
-			token_stream = apply_binds(mem, &text, &auxil, &program) catch |err| {
-				std.debug.print("Parse Error {}\n", .{err});
+			redo = fill_hoist(mem, &auxil, &program) catch |err| {
+				std.debug.print("Hoist Error {}\n", .{err});
 				return;
 			};
+			show_tokens(auxil);
+			std.debug.print("hoisted--------------------------\n", .{});
 		}
 		else {
-			token_stream = apply_binds(mem, &auxil, &text, &program) catch |err| {
-				std.debug.print("Parse Error {}\n", .{err});
+			redo = fill_hoist(mem, &text, &program) catch |err| {
+				std.debug.print("Hoist Error {}\n", .{err});
 				return;
 			};
+			show_tokens(text);
+			std.debug.print("hoisted--------------------------\n", .{});
 		}
-		show_tokens(token_stream.*);
-		std.debug.print("applied binds-------------------\n", .{});
+		if (redo == false){
+			break;
+		}
 	}
 	const instructions = parse_bytecode(mem, token_stream) catch |err| {
 		std.debug.print("Bytecode Parse Error {}\n", .{err});
@@ -132,7 +154,8 @@ const TOKEN = enum {
 
 const Token = struct {
 	text: []u8,
-	tag: TOKEN
+	tag: TOKEN,
+	hoist_data: ?AppliedBind
 };
 
 const Arg = struct {
@@ -166,7 +189,7 @@ const Bind = struct {
 	precedence: u8,
 	args: Buffer(Arg),
 	hoist: Buffer(Token),
-	hoist_token: ?Token,
+	hoist_token: ?Arg,
 	text: Buffer(Token)
 };
 
@@ -271,7 +294,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 			if (escape){
 				tag = .IDENTIFIER;
 			}
-			tokens.append(Token{.tag=tag, .text=text[i..i+1]})
+			tokens.append(Token{.tag=tag, .text=text[i..i+1], .hoist_data=null})
 				catch unreachable;
 			i += 1;
 			continue;
@@ -297,7 +320,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				tag = .IDENTIFIER;
 			}
 		}
-		tokens.append(Token{.tag=tag, .text=keyword})
+		tokens.append(Token{.tag=tag, .text=keyword, .hoist_data=null})
 			catch unreachable;
 		i += size;
 	}
@@ -393,26 +416,21 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 		return ParseError.PrematureEnd;
 	}
 	token_index.* += 1;
-	try split_hoist(&bind);
+	try split_hoist(mem, &bind);
 	return bind;
 }
 
-pub fn split_hoist(bind: *Bind) ParseError!void {
-	var last = bind.text.items[0];
+pub fn split_hoist(mem: *const std.mem.Allocator, bind: *Bind) ParseError!void {
 	for (bind.text.items, 0..) |tok, i| {
 		if (tok.tag == .HOIST){
-			if (i == 0){
-				std.debug.print("Required hoist token to hoist", .{});
-				return ParseError.UnexpectedToken;
-			}
-			bind.hoist_token = last;
 			var index: u64 = 0;
-			while (index < i-1){
+			while (index < i){
 				bind.hoist.append(bind.text.items[index])
 					catch unreachable;
 				index += 1;
 			}
-			index += 2;
+			index += 1;
+			bind.hoist_token = try parse_arg(mem, bind.text.items, &index);
 			var offset: u64 = 0;
 			while (index < bind.text.items.len) {
 				bind.text.items[offset] = bind.text.items[index];
@@ -422,7 +440,6 @@ pub fn split_hoist(bind: *Bind) ParseError!void {
 			bind.text.items.len = offset;
 			return;
 		}
-		last = tok;
 	}
 }
 
@@ -510,8 +527,15 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 		arg.tag = .optional; 
 	}
 	else if (tokens[token_index.*].tag != .ARGUMENT){
-		std.debug.print("Expected either - ? or + to head non keyword argument, found {} {s}\n", .{tokens[token_index.*].tag, tokens[token_index.*].text});
-		return ParseError.UnexpectedToken;
+		const nonstandard = Arg {
+			.tag = .inclusion,
+			.name=tokens[token_index.*],
+			.pattern=Pattern{
+				.keyword=tokens[token_index.*]
+			}
+		};
+		token_index.* += 1;
+		return nonstandard;
 	}
 	token_index.* += 1;
 	if (token_index.* == tokens.len){
@@ -1061,6 +1085,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 	};
 	var index: u64 = input_index;
 	var nest_depth: u64 = 0;
+	var first = true;
 	outer: while (index < current.bind.text.items.len) : (index += 1){
 		const token = &current.bind.text.items[index];
 		if (altnest){
@@ -1102,14 +1127,27 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 					concat[i] = right[i-left.len];
 					i += 1;
 				}
-				new.items[new.items.len-1] = Token{.tag=.IDENTIFIER, .text=concat};
+				new.items[new.items.len-1] = Token{.tag=.IDENTIFIER, .text=concat, .hoist_data=null};
 				index += 1;
 				continue :outer;
 			}
 		}
 		if (current.uniques.get(token.text)) |id| {
-			new.append(Token{.tag=.IDENTIFIER, .text=id})
-				catch unreachable;
+			if (first){
+				first = false;
+				if (current.bind.hoist_token) |_| {
+					new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=current})
+						catch unreachable;
+				}
+				else{
+					new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=null})
+						catch unreachable;
+				}
+			}
+			else{
+				new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=null})
+					catch unreachable;
+			}
 			continue :outer;
 		}
 		var arg_index: u64 = 0;
@@ -1171,7 +1209,14 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 				}
 				std.debug.assert(arg.expansion != null);
 				for (arg.expansion.?) |*tok| {
-					new.append(tok.*)
+					var tmp_tok = tok.*;
+					if (first){
+						first = false;
+						if (current.bind.hoist_token) |_| {
+							tmp_tok.hoist_data = current;
+						}
+					}
+					new.append(tmp_tok)
 						catch unreachable;
 				}
 				continue :outer;
@@ -1197,7 +1242,14 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 				}
 				std.debug.assert(arg.expansion != null);
 				for (arg.expansion.?) |*tok| {
-					new.append(tok.*)
+					var tmp_tok = tok.*;
+					if (first){
+						first = false;
+						if (current.bind.hoist_token) |_|{
+							tmp_tok.hoist_data = current;
+						}
+					}
+					new.append(tmp_tok)
 						catch unreachable;
 				}
 				continue :outer;
@@ -1207,12 +1259,200 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 			}
 			std.debug.assert(arg.expansion != null);
 			for (arg.expansion.?) |*tok| {
-				new.append(tok.*)
+				var tmp_tok = tok.*;
+				if (first){
+					first = false;
+					if (current.bind.hoist_token)|_|{
+						tmp_tok.hoist_data = current;
+					}
+				}
+				new.append(tmp_tok)
 					catch unreachable;
 			}
 			continue :outer;
 		}
-		new.append(token.*)
+		var tmp_tok = token.*;
+		if (first){
+			first = false;
+			if (current.bind.hoist_token)|_|{
+				tmp_tok.hoist_data = current;
+			}
+		}
+		new.append(tmp_tok)
+			catch unreachable;
+	}
+	if (current.bind.tag == .compile){
+		metaprogram(new, outer_binds, mem);
+	}
+	return index;
+}
+
+pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current: AppliedBind, new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
+	for (current.expansions.items) |applied| {
+		stack.append(applied)
+			catch unreachable;
+	}
+	defer for (current.expansions.items) |_| {
+		_ = stack.pop();
+	};
+	var index: u64 = input_index;
+	var nest_depth: u64 = 0;
+	outer: while (index < current.bind.hoist.items.len) : (index += 1){
+		const token = &current.bind.hoist.items[index];
+		if (altnest){
+			if (token.tag == .ALTERNATE or token.tag == .CLOSE_BRACK){
+				if (nest_depth == 0){
+					break :outer;
+				}
+				if (token.tag == .CLOSE_BRACK){
+					nest_depth -= 1;
+				}
+			}
+			else if (token.tag == .OPEN_BRACK){
+				nest_depth += 1;
+			}
+		}
+		else if (varnest){
+			if (token.tag == .CLOSE_BRACE){
+				if (nest_depth == 0){
+					break :outer;
+				}
+				nest_depth -= 1;
+			}
+			if (token.tag == .OPEN_BRACE){
+				nest_depth += 1;
+			}
+		}
+		if (token.tag == .CONCAT){
+			const left = new.items[new.items.len-1].text;
+			if (index+1 < current.bind.hoist.items.len){
+				const right = current.bind.hoist.items[index+1].text;
+				const concat = mem.alloc(u8, left.len+right.len)
+					catch unreachable;
+				var i:u64 = 0;
+				while (i < left.len){
+					concat[i] = left[i];
+					i += 1;
+				}
+				while ((i-left.len) < right.len){
+					concat[i] = right[i-left.len];
+					i += 1;
+				}
+				new.items[new.items.len-1] = Token{.tag=.IDENTIFIER, .text=concat, .hoist_data=null};
+				index += 1;
+				continue :outer;
+			}
+		}
+		if (current.uniques.get(token.text)) |id| {
+			new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=null})
+				catch unreachable;
+			continue :outer;
+		}
+		var arg_index: u64 = 0;
+		while (arg_index < stack.items.len) : (arg_index += 1){
+			const arg = stack.items[arg_index];
+			if (!token_equal(token, &arg.arg.name)){
+				continue;
+			}
+			if (arg.arg.pattern == Pattern.alternate){
+				if (index < current.bind.hoist.items.len){
+					if (current.bind.hoist.items[index+1].tag == .OPEN_BRACK){
+						for (arg.nodes.items) |alt_arg| {
+							stack.append(alt_arg)
+								catch unreachable;
+						}
+						defer for (arg.nodes.items) |_| {
+							_ = stack.pop();
+						};
+						index += 2;
+						for (0..arg.alternate) |_| {
+							var depth: u64 = 0;
+							while (index < current.bind.hoist.items.len) : (index += 1){
+								if (current.bind.hoist.items[index].tag == .ALTERNATE){
+									if (depth == 0){
+										index += 1;
+										break;
+									}
+									continue;
+								}
+								if (current.bind.hoist.items[index].tag == .OPEN_BRACK){
+									depth += 1;
+									continue;
+								}
+								if (current.bind.hoist.items[index].tag == .CLOSE_BRACK){
+									if (depth == 0){
+										std.debug.print("Not enough alternate expansions for alternate applied in bind argument\n", .{});
+										return ParseError.AlternateUnmatchable;
+									}
+									depth -= 1;
+								}
+							}
+						}
+						index = try rewrite(mem, outer_binds, current, new, index, false, true, stack);
+						var depth: u64 = 0;
+						while (index < current.bind.hoist.items.len) : (index += 1){
+							if (current.bind.hoist.items[index].tag == .OPEN_BRACK){
+								depth += 1;
+								continue;
+							}
+							if (current.bind.hoist.items[index].tag == .CLOSE_BRACK){
+								if (depth == 0){
+									break;
+								}
+								depth -= 1;
+							}
+						}
+						continue :outer;
+					}
+				}
+				std.debug.assert(arg.expansion != null);
+				for (arg.expansion.?) |*tok| {
+					const tmp_tok = tok.*;
+					new.append(tmp_tok)
+						catch unreachable;
+				}
+				continue :outer;
+			}
+			if (arg.arg.pattern == Pattern.variadic){
+				if (index < current.bind.hoist.items.len){
+					if (current.bind.hoist.items[index+1].tag == .OPEN_BRACE){
+						const save_index = index+1;
+						for (arg.nodes.items) |iter| {
+							for (iter.nodes.items) |iter_arg| {
+								stack.append(iter_arg)
+									catch unreachable;
+							}
+							index = try rewrite(mem, outer_binds, current, new, save_index+1, true, false, stack);
+							std.debug.assert(current.bind.hoist.items.len-1 == index);
+							for (iter.nodes.items) |_| {
+								_ = stack.pop();
+							}
+						}
+						std.debug.assert(current.bind.hoist.items.len-1 == index);
+						continue :outer;
+					}
+				}
+				std.debug.assert(arg.expansion != null);
+				for (arg.expansion.?) |*tok| {
+					const tmp_tok = tok.*;
+					new.append(tmp_tok)
+						catch unreachable;
+				}
+				continue :outer;
+			}
+			if (arg.arg.tag == .unique){
+				continue :outer;
+			}
+			std.debug.assert(arg.expansion != null);
+			for (arg.expansion.?) |*tok| {
+				const tmp_tok = tok.*;
+				new.append(tmp_tok)
+					catch unreachable;
+			}
+			continue :outer;
+		}
+		const tmp_tok = token.*;
+		new.append(tmp_tok)
 			catch unreachable;
 	}
 	if (current.bind.tag == .compile){
@@ -1483,4 +1723,49 @@ pub fn show_location(loc: *Location) void {
 	}
 }
 
-//TODO hoisting to closest token
+pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *ProgramText) ParseError!bool {
+	var new = aux;
+	new.clearRetainingCapacity();
+	var hoisted = false;
+	for (program.text.items) |*token| {
+		if (token.hoist_data) |hoist| {
+			hoisted = true;
+			var index = new.items.len;
+			var uniques = std.StringHashMap([]u8).init(mem.*);
+			defer uniques.deinit();
+			while (index > 0){
+				const tree = apply_rule(mem, &uniques, &token.hoist_data.?.bind.hoist_token.?, program.text.items, index-1, 0) catch {
+					index -= 1;
+					continue;
+				};
+				if (tree) |seq| {
+					std.debug.assert(seq.expansion != null);
+					var pos = index-1;
+					var temp = Buffer(Token).init(mem.*);
+					defer temp.deinit();
+					while (pos < new.items.len){
+						temp.append(new.items[pos])
+							catch unreachable;
+						pos += 1;
+					}
+					new.items.len = index-1;
+					var stack = Buffer(*ArgTree).init(mem.*);
+					_ = try rewrite_hoist(mem, program.binds, hoist, new, 0, false, false, &stack);
+					for (temp.items) |relay| {
+						new.append(relay)
+							catch unreachable;
+					}
+					break;
+				}
+				unreachable;
+			}
+		}
+		var copy = token.*;
+		copy.hoist_data = null;
+		new.append(copy)
+			catch unreachable;
+	}
+	return hoisted;
+}
+
+//TODO make hoisting metadata concatenative rather than overwriting
