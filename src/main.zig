@@ -1085,7 +1085,13 @@ pub fn token_equal(a: *Token, b: *Token) bool {
 	return std.mem.eql(u8, a.text, b.text);
 }
 
-pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current: AppliedBind, new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
+pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current: AppliedBind, input_new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
+	var new = input_new;
+	var temp = Buffer(Token).init(mem.*);
+	defer temp.deinit();
+	if (current.bind.tag == .compile){
+		new = &temp;
+	}
 	for (current.expansions.items) |applied| {
 		stack.append(applied)
 			catch unreachable;
@@ -1647,7 +1653,7 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 		.IDENTIFIER => {
 			token_index.* += 1;
 			return Location{
-				.literal = hash_global_enum(token)
+				.immediate = hash_global_enum(token)
 			};
 		},
 		.LIT => {
@@ -1659,7 +1665,7 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 				return ParseError.UnexpectedToken;
 			}
 			return Location{
-				.immediate = hash_global_enum(token)
+				.literal = hash_global_enum(token)
 			};
 		},
 		else => {
@@ -1716,10 +1722,10 @@ pub fn show_instructions(instructions: Buffer(Instruction)) void {
 pub fn show_location(loc: *Location) void {
 	switch (loc.*){
 		.immediate => {
-			std.debug.print("!{} ", .{loc.immediate});
+			std.debug.print("{} ", .{loc.immediate});
 		},
 		.literal => {
-			std.debug.print("{} ", .{loc.literal});
+			std.debug.print("!{} ", .{loc.literal});
 		},
 		.register => {
 			std.debug.print("{} ", .{loc.register});
@@ -1888,21 +1894,64 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 						ip = try val64(inst.jump.dest);
 						continue;
 					},
-					.JEQ => {}, // TODO conditional jumps
-					.JNE => {},
-					.JLT => {},
-					.JGT => {},
-					.JLE => {},
-					.JGE => {},
-					.JZ => {},
-					.JNZ => {},
+					.JEQ => {
+						if (load_u64(vm.sr) == 0){
+							ip = try val64(inst.jump.dest);
+							continue;
+						}
+					},
+					.JNE => {
+						if (load_u64(vm.sr) != 0){
+							ip = try val64(inst.jump.dest);
+							continue;
+						}
+					},
+					.JLT => {
+						if (load_u64(vm.sr) == 2){
+							ip = try val64(inst.jump.dest);
+							continue;
+						}
+					},
+					.JGT => {
+						if (load_u64(vm.sr) == 1){
+							ip = try val64(inst.jump.dest);
+							continue;
+						}
+					},
+					.JLE => {
+						if (load_u64(vm.sr) != 1){
+							ip = try val64(inst.jump.dest);
+							continue;
+						}
+					},
+					.JGE => {
+						if (load_u64(vm.sr) != 2){
+							ip = try val64(inst.jump.dest);
+							continue;
+						}
+					},
+					.JZ => {
+						if (load_u64(vm.sr) == 0){
+							ip = try val64(inst.jump.dest);
+							continue;
+						}
+					},
+					.JNZ => {
+						if (load_u64(vm.sr) != 0){
+							ip = try val64(inst.jump.dest);
+							continue;
+						}
+					},
 					else => {
 						return RuntimeError.UnknownJump;
 					}
 				}
 				ip += 1;
 			},
-			.interrupt => {}
+			.interrupt => {
+				std.debug.print("interrupted\n", .{});
+				ip += 1;
+			}
 		}
 	}
 }
