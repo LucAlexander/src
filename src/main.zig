@@ -6,8 +6,10 @@ const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 var iden_hashes = std.StringHashMap(u64).init(std.heap.page_allocator);
 var current_iden: u64 = 0;
 
+const mem_size = 1000;
+
 const VM = struct {
-	mem: [10000]u8,
+	mem: [mem_size+8*5]u8,
 	r0: u64,
 	r1: u64,
 	r2: u64,
@@ -17,11 +19,11 @@ const VM = struct {
 	pub fn init() VM {
 		return VM{
 			.mem=undefined,
-			.r0=0,
-			.r1=0,
-			.r2=0,
-			.r3=0,
-			.sr=0
+			.r0=mem_size,
+			.r1=mem_size+1*8,
+			.r2=mem_size+2*8,
+			.r3=mem_size+3*8,
+			.sr=mem_size+4*8
 		};
 	}
 };
@@ -41,10 +43,10 @@ pub fn main() !void {
 	const tokens = tokenize(&mem, contents);
 	show_tokens(tokens);
 	std.debug.print("initial------------------------------\n", .{});
-	metaprogram(&tokens, Buffer(Bind).init(mem), &mem);
+	metaprogram(&tokens, Buffer(Bind).init(mem), &mem, false);
 }
 
-pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *const std.mem.Allocator) void {
+pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *const std.mem.Allocator, run: bool) void {
 	const allocator = std.heap.page_allocator;
 	var main_aux = std.heap.ArenaAllocator.init(allocator);
 	var main_txt = std.heap.ArenaAllocator.init(allocator);
@@ -117,7 +119,15 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 		return;
 	};
 	show_instructions(instructions);
-	//TODO run
+	if (run){
+		interpret(instructions) catch |err| {
+			std.debug.print("Runtim Error {}\n", .{err});
+			return;
+		};
+	}
+	else{
+		//TODO serialize
+	}
 }
 
 const ParseError = error {
@@ -1282,7 +1292,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 			catch unreachable;
 	}
 	if (current.bind.tag == .compile){
-		metaprogram(new, outer_binds, mem);
+		metaprogram(new, outer_binds, mem, true);
 	}
 	return index;
 }
@@ -1456,7 +1466,7 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), c
 			catch unreachable;
 	}
 	if (current.bind.tag == .compile){
-		metaprogram(new, outer_binds, mem);
+		metaprogram(new, outer_binds, mem, true);
 	}
 	return index;
 }
@@ -1531,7 +1541,6 @@ const Instruction = union(enum) {
 		dest: Location
 	},
 	interrupt,
-
 };
 
 pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) ParseError!Buffer(Instruction) {
@@ -1766,6 +1775,136 @@ pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *
 			catch unreachable;
 	}
 	return hoisted;
+}
+
+const RuntimeError = error {
+	UnknownRegister,
+	UnknownALU,
+	UnknownJump,
+	LiteralAssignment
+};
+
+pub fn load_u64(addr: u64) u64 {
+	var tmp: [8]u8 = undefined;
+    @memcpy(&tmp, vm.mem[addr .. addr + 8]);
+    return @bitCast(tmp);	
+}
+
+pub fn store_u64(addr: u64, val: u64) void {
+	const bytes: [8]u8 = @bitCast(val);
+    @memcpy(vm.mem[addr .. addr + 8], &bytes);	
+}
+
+//TODO replace old functions with load and store
+pub fn loc64(l: Location, val: u64) RuntimeError!void {
+	switch (l){
+		.immediate => {
+			store_u64(l.immediate, val);
+		},
+		.literal => {
+			return RuntimeError.LiteralAssignment;
+		}, 
+		.register => {
+			switch (l.register){
+				.R0 => {store_u64(vm.r0, val);},
+				.R1 => {store_u64(vm.r1, val);},
+				.R2 => {store_u64(vm.r2, val);},
+				.R3 => {store_u64(vm.r3, val);},
+				else => {
+					return RuntimeError.UnknownRegister;
+				}
+			}
+		},
+		.dereference => {
+			const inner = try val64(l.dereference.*);
+			store_u64(inner, val);
+		}
+	}
+}
+
+pub fn val64(l: Location) RuntimeError!u64 {
+	switch (l){
+		.immediate => {
+			return load_u64(l.immediate);
+		},
+		.literal => {
+			return l.literal;
+		},
+		.register => {
+			switch (l.register){
+				.R0 => {return load_u64(vm.r0);},
+				.R1 => {return load_u64(vm.r1);},
+				.R2 => {return load_u64(vm.r2);},
+				.R3 => {return load_u64(vm.r3);},
+				else => {
+					return RuntimeError.UnknownRegister;
+				}
+			}
+		},
+		.dereference => {
+			const inner = try val64(l.dereference.*);
+			return load_u64(inner);
+		}
+	}
+	unreachable;
+}
+
+pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
+	var ip: u64 = 0;
+	while (ip < instructions.items.len){
+		const inst = instructions.items[ip];
+		switch (inst){
+			.move => {
+				try loc64(inst.move.dest, try val64(inst.move.src));
+				ip += 1;
+			},
+			.compare => {
+				const left = try val64(inst.compare.left);
+				const right = try val64(inst.compare.right);
+				if (left > right) {
+					vm.mem[vm.sr] = 1;
+				}
+				else if (left < right) {
+					vm.mem[vm.sr] = 2;
+				}
+				vm.mem[vm.sr] = 0;
+				ip += 1;
+			},
+			.alu => {
+				switch (inst.alu.tag){
+					.ADD => { try loc64(inst.alu.dest, try val64(inst.alu.left) + try val64(inst.alu.right)); },
+					.SUB => { try loc64(inst.alu.dest, try val64(inst.alu.left) - try val64(inst.alu.right)); },
+					.MUL => { try loc64(inst.alu.dest, try val64(inst.alu.left) * try val64(inst.alu.right)); },
+					.DIV => { try loc64(inst.alu.dest, try val64(inst.alu.left) / try val64(inst.alu.right)); },
+					else => {
+						return RuntimeError.UnknownALU;
+					}
+				}
+				ip += 1;
+			},
+			.jump => {
+				switch(inst.jump.tag){
+					.JMP => {
+						ip = try val64(inst.jump.dest);
+						continue;
+					},
+					.JEQ => {}, // TODO conditional jumps
+					.JNE => {},
+					.JLT => {},
+					.JGT => {},
+					.JLE => {},
+					.JGE => {},
+					.JZ => {},
+					.JNZ => {},
+					else => {
+						return RuntimeError.UnknownJump;
+					}
+				}
+				ip += 1;
+			},
+			.interrupt => {}
+		}
+	}
 }
 
 //TODO make hoisting metadata concatenative rather than overwriting
