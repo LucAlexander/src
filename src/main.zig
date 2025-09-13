@@ -121,12 +121,15 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 	show_instructions(instructions);
 	if (run){
 		interpret(instructions) catch |err| {
-			std.debug.print("Runtim Error {}\n", .{err});
+			std.debug.print("Runtime Error {}\n", .{err});
 			return;
 		};
 	}
 	else{
-		//TODO serialize
+		//serialize(mem, instructions) catch |err| {
+			//std.debug.print("Write Error {}\n", .{err});
+			//return;
+		//};
 	}
 }
 
@@ -209,13 +212,15 @@ const ArgTree = struct {
 	arg: Arg,
 	alternate: u64,
 	expansion: ?[]Token,
+	expansion_len: u64,
 	
 	pub fn init(mem: *const std.mem.Allocator, arg: Arg, exp: ?[]Token) *ArgTree {
 		const tree = ArgTree {
 			.arg=arg,
 			.expansion=exp,
 			.alternate=0,
-			.nodes=Buffer(*ArgTree).init(mem.*)
+			.nodes=Buffer(*ArgTree).init(mem.*),
+			.expansion_len = exp.?.len
 		};
 		const loc = mem.create(ArgTree) catch unreachable;
 		loc.* = tree;
@@ -838,7 +843,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 						std.debug.assert(seq.expansion != null);
 						list.append(seq)
 							catch unreachable;
-						temp_index += seq.expansion.?.len;
+						temp_index += seq.expansion_len;
 					}
 				}
 				const tree = ArgTree.init(mem, name, tokens[token_index..temp_index]);
@@ -856,8 +861,10 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 				std.debug.assert(seq.expansion != null);
 				list.append(seq)
 					catch unreachable;
-				temp_index += seq.expansion.?.len;
+				temp_index += seq.expansion_len;
 			}
+			const after_first = temp_index;
+			var before_last = temp_index;
 			while (temp_index < tokens.len){
 				const close_sequence = apply_rule(mem, uniques, pattern.group.close, tokens, temp_index, var_depth) catch {
 					temp_index += 1;
@@ -867,11 +874,13 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 					std.debug.assert(close.expansion != null);
 					list.append(close)
 						catch unreachable;
-					temp_index += close.expansion.?.len;
+					before_last = temp_index;
+					temp_index += close.expansion_len;
 				}
 				break;
 			}
-			const tree = ArgTree.init(mem, name, tokens[token_index..temp_index]);
+			const tree = ArgTree.init(mem, name, tokens[after_first..before_last]);
+			tree.expansion_len = temp_index-token_index;
 			tree.nodes = list;
 			return tree;
 		},
@@ -903,7 +912,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 						std.debug.assert(seq.expansion != null);
 						sublist.append(seq)
 							catch unreachable;
-						temp_index += seq.expansion.?.len;
+						temp_index += seq.expansion_len;
 					}
 				}
 				std.debug.assert(pattern.variadic.separator != null);
@@ -923,7 +932,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 					std.debug.assert(sep.expansion != null);
 					sublist.append(sep)
 						catch unreachable;
-					temp_index += sep.expansion.?.len;
+					temp_index += sep.expansion_len;
 				}
 				superlist.append(sublist)
 					catch unreachable;
@@ -947,7 +956,7 @@ pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, t
 			std.debug.assert(seq.expansion != null);
 			list.append(seq)
 				catch unreachable;
-			token_index.* += seq.expansion.?.len;
+			token_index.* += seq.expansion_len;
 		}
 	}
 	return AppliedBind{
@@ -1801,7 +1810,6 @@ pub fn store_u64(addr: u64, val: u64) void {
     @memcpy(vm.mem[addr .. addr + 8], &bytes);	
 }
 
-//TODO replace old functions with load and store
 pub fn loc64(l: Location, val: u64) RuntimeError!void {
 	switch (l){
 		.immediate => {
@@ -1955,5 +1963,63 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 		}
 	}
 }
-
-//TODO make hoisting metadata concatenative rather than overwriting
+//
+//pub fn serialize(mem: *const std.mem.Allocator, instructions: Buffer(Instruction)) !void {
+	//var file = try std.fs.cwd().createFile(
+		//"out.bin",
+		//.{.truncate=true}
+	//);
+	//defer file.close();
+	//var data = Buffer(u8).init(mem.*);
+	//for (instructions.items) |inst| {
+		//switch (inst){
+			//.move => {
+				//data.append(0x01)
+					//catch unreachable;
+				//write_location(&data, inst.move.dest);
+				//write_location(&data, inst.move.src);
+			//},
+			//.alu => {
+				//data.append(@intFromEnum(inst.alu.tag))
+					//catch unreachable;
+				//write_location(&data, inst.move.dest);
+				//write_location(&data, inst.move.left);
+				//write_location(&data, inst.move.right);
+			//},
+			//.compare => {
+				//data.append(0x02)
+					//catch unreachable;
+				//write_location(&data, inst.move.left);
+				//write_location(&data, inst.move.right);
+			//},
+			//.jump => {
+				//data.append(@intFromEnum(inst.jump.tag))
+					//catch unreachable;
+				//write_location(&data, inst.move.dest);
+			//},
+			//.interrupt => {
+				//data.append(0x03)
+					//catch unreachable;
+			//}
+		//}
+	//}
+	//try file.writeAll(data.items);
+//}
+//
+//pub fn write_location(data: *Buffer(u8), loc: Location) void {
+	//switch(loc){
+		//.immediate => {
+			//data.append(loc.immediate)
+				//catch unreachable;
+		//},
+		//.literal => {
+			//data.append(0x04)
+				//catch unreachable;
+			//data.append(loc.literal)
+				//catch unreachable;
+		//},
+		////TODO uh oh this is too simple and doesnt work lol
+	//}
+//}
+//
+////TODO make hoisting metadata concatenative rather than overwriting
