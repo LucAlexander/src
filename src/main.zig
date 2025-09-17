@@ -6,7 +6,9 @@ const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 var iden_hashes = std.StringHashMap(u64).init(std.heap.page_allocator);
 var current_iden: u64 = 0;
 
-const mem_size = 1000;
+var persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
+
+const mem_size = 0x1000;
 
 const VM = struct {
 	mem: [mem_size+8*5]u8,
@@ -43,10 +45,11 @@ pub fn main() !void {
 	const tokens = tokenize(&mem, contents);
 	show_tokens(tokens);
 	std.debug.print("initial------------------------------\n", .{});
-	metaprogram(&tokens, Buffer(Bind).init(mem), &mem, false);
+	var binds = Buffer(Bind).init(mem);
+	_ = metaprogram(&tokens, &binds, &mem, false);
 }
 
-pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *const std.mem.Allocator, run: bool) void {
+pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool) ?*const Buffer(Token) {
 	const allocator = std.heap.page_allocator;
 	var main_aux = std.heap.ArenaAllocator.init(allocator);
 	var main_txt = std.heap.ArenaAllocator.init(allocator);
@@ -72,7 +75,7 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 			done = parse(mem, token_stream, &program, &token_index) catch |err| {
 				std.debug.print("Parse Error {}\n", .{err});
 				report_error(token_stream, token_index);
-				return;
+				return null;
 			};
 			show_program(program);
 			std.debug.print("parsed--------------------------\n", .{});
@@ -82,13 +85,13 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 			if (program.text == &text){
 				token_stream = apply_binds(mem, &text, &auxil, &program) catch |err| {
 					std.debug.print("Parse Error {}\n", .{err});
-					return;
+					return null;
 				};
 			}
 			else {
 				token_stream = apply_binds(mem, &auxil, &text, &program) catch |err| {
 					std.debug.print("Parse Error {}\n", .{err});
-					return;
+					return null;
 				};
 			}
 			show_tokens(token_stream.*);
@@ -97,7 +100,7 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 		if (program.text == &text){
 			redo = fill_hoist(mem, &auxil, &program) catch |err| {
 				std.debug.print("Hoist Error {}\n", .{err});
-				return;
+				return null;
 			};
 			show_tokens(auxil);
 			std.debug.print("hoisted--------------------------\n", .{});
@@ -105,7 +108,7 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 		else {
 			redo = fill_hoist(mem, &text, &program) catch |err| {
 				std.debug.print("Hoist Error {}\n", .{err});
-				return;
+				return null;
 			};
 			show_tokens(text);
 			std.debug.print("hoisted--------------------------\n", .{});
@@ -114,23 +117,25 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: Buffer(Bind), mem: *cons
 			break;
 		}
 	}
-	const instructions = parse_bytecode(mem, token_stream) catch |err| {
-		std.debug.print("Bytecode Parse Error {}\n", .{err});
-		return;
-	};
-	show_instructions(instructions);
 	if (run){
+		const instructions = parse_bytecode(mem, token_stream) catch |err| {
+			std.debug.print("Bytecode Parse Error {}\n", .{err});
+			return null;
+		};
+		show_instructions(instructions);
 		interpret(instructions) catch |err| {
 			std.debug.print("Runtime Error {}\n", .{err});
-			return;
+			return null;
 		};
 	}
 	else{
+		std.debug.print("Finished computation\n", .{});
 		//serialize(mem, instructions) catch |err| {
 			//std.debug.print("Write Error {}\n", .{err});
 			//return;
 		//};
 	}
+	return token_stream;
 }
 
 const ParseError = error {
@@ -155,6 +160,8 @@ const TOKEN = enum {
 	HOIST,
 	MOV,
 	LIT,
+	COMP_MOVE,
+	COMP_STORE,
 	ADD, SUB, MUL, DIV, CMP,
 	JMP,
 	JLT, JGT, JLE, JGE,
@@ -238,7 +245,7 @@ const AppliedBind = struct {
 
 const ProgramText = struct {
 	text: *Buffer(Token),
-	binds: Buffer(Bind)
+	binds: *Buffer(Bind)
 };
 
 pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
@@ -249,6 +256,8 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	token_map.put("_bind", .BIND_PATTERN) catch unreachable;
 	token_map.put("...", .ELIPSES) catch unreachable;
 	token_map.put("mov", .MOV) catch unreachable;
+	token_map.put("CMOVE", .COMP_MOVE) catch unreachable;
+	token_map.put("CSTORE", .COMP_STORE) catch unreachable;
 	token_map.put("add", .ADD) catch unreachable;
 	token_map.put("sub", .SUB) catch unreachable;
 	token_map.put("mul", .MUL) catch unreachable;
@@ -1094,7 +1103,7 @@ pub fn token_equal(a: *Token, b: *Token) bool {
 	return std.mem.eql(u8, a.text, b.text);
 }
 
-pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current: AppliedBind, input_new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
+pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), current: AppliedBind, input_new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
 	var new = input_new;
 	var temp = Buffer(Token).init(mem.*);
 	defer temp.deinit();
@@ -1161,8 +1170,14 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 			if (first){
 				first = false;
 				if (current.bind.hoist_token) |_| {
-					new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=current})
-						catch unreachable;
+					if (current.bind.tag != .compile){
+						new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=current})
+							catch unreachable;
+					}
+					else{
+						new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=null})
+							catch unreachable;
+					}
 				}
 				else{
 					new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=null})
@@ -1238,7 +1253,9 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 					if (first){
 						first = false;
 						if (current.bind.hoist_token) |_| {
-							tmp_tok.hoist_data = current;
+							if (current.bind.tag != .compile){
+								tmp_tok.hoist_data = current;
+							}
 						}
 					}
 					new.append(tmp_tok)
@@ -1271,7 +1288,9 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 					if (first){
 						first = false;
 						if (current.bind.hoist_token) |_|{
-							tmp_tok.hoist_data = current;
+							if (current.bind.tag != .compile){
+								tmp_tok.hoist_data = current;
+							}
 						}
 					}
 					new.append(tmp_tok)
@@ -1288,7 +1307,9 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 				if (first){
 					first = false;
 					if (current.bind.hoist_token)|_|{
-						tmp_tok.hoist_data = current;
+						if (current.bind.tag != .compile){
+							tmp_tok.hoist_data = current;
+						}
 					}
 				}
 				new.append(tmp_tok)
@@ -1300,19 +1321,97 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current
 		if (first){
 			first = false;
 			if (current.bind.hoist_token)|_|{
-				tmp_tok.hoist_data = current;
+				if (current.bind.tag != .compile){
+					tmp_tok.hoist_data = current;
+				}
 			}
 		}
 		new.append(tmp_tok)
 			catch unreachable;
 	}
 	if (current.bind.tag == .compile){
-		metaprogram(new, outer_binds, mem, true);
+		if (current.bind.hoist_token) |_| {
+			var dummy = Buffer(Token).init(mem.*);
+			var dummy_stack = Buffer(*ArgTree).init(mem.*);
+			defer dummy.deinit();
+			defer dummy_stack.deinit();
+			_ = try rewrite_hoist(mem, outer_binds, current, &dummy, 0, false, false, &dummy_stack);
+			//NOTE rewrite hoist should now metaprogram silently on just the hoist content
+			const data = metaprogram(new, outer_binds, mem, false);
+			//NOTE this reduces the non hoist to unparsed token data
+			if (data) |tokens| {
+				try move_data(input_new, tokens, mem, current);
+			}
+		}
+		else{
+			std.debug.print("u\n", .{});
+			_ = metaprogram(new, outer_binds, mem, true);
+		}
 	}
 	return index;
 }
 
-pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), current: AppliedBind, new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
+pub fn move_data(run: *Buffer(Token), comp: *const Buffer(Token), mem: *const std.mem.Allocator, current: AppliedBind) ParseError!void {
+	var token_index: u64 = 0;
+	while (token_index < comp.items.len){
+		skip_whitespace(comp.items, &token_index) catch {
+			return;
+		};
+		if (token_index > comp.items.len){
+			std.debug.print("Expected instruction data, found end of file\n", .{});
+			return ParseError.UnexpectedEOF;
+		}
+		var token = comp.items[token_index];
+		token_index += 1;
+		if (token.tag == .COMP_MOVE){
+			const loc = try parse_location(mem, comp, &token_index);
+			token = comp.items[token_index];
+			token_index += 1;
+			if (token.tag != .COMP_MOVE){
+				std.debug.print("Expected end of comp time move location, found {s}\n", .{token.text});
+				return ParseError.UnexpectedToken;
+			}
+			token = mk_token_from_u64(mem, val64(loc) catch |err| {
+				std.debug.print("Encountered error in comptime move value {}\n", .{err});
+				return ParseError.UnexpectedToken;
+			});
+		}
+		else if (token.tag == .COMP_STORE){
+			const loc = try parse_location(mem, comp, &token_index);
+			token = comp.items[token_index];
+			token_index += 1;
+			if (token.tag != .COMP_STORE){
+				std.debug.print("Expected end of comp time store value, found {s}\n", .{token.text});
+				return ParseError.UnexpectedToken;
+			}
+			if (token_index != comp.items.len){
+				token = comp.items[token_index];
+				std.debug.print("Expected end of comp time raise section, found {s}\n", .{token.text});
+				return ParseError.UnexpectedToken;
+			}
+			if (current.bind.args.items.len > 1){
+				std.debug.print("Expected target of persistent comptime storage to be single token\n", .{});
+				return ParseError.UnexpectedToken;
+			}
+			const name = current.bind.args.items[0];
+			persistent.put(name.name.text, val64(loc) catch |err| {
+				std.debug.print("Encountered error in comptime move value {}\n", .{err});
+				return ParseError.UnexpectedToken;
+			}) catch unreachable;
+			return;
+		}
+		run.append(token)
+			catch unreachable;
+	}
+}
+
+pub fn mk_token_from_u64(mem: *const std.mem.Allocator, val: u64) Token {
+	const buf = mem.alloc(u8, 20) catch unreachable;
+	const slice = std.fmt.bufPrint(buf, "{}", .{val}) catch unreachable;
+	return Token{.tag=.IDENTIFIER, .text=slice, .hoist_data=null};
+}
+
+pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), current: AppliedBind, new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
 	for (current.expansions.items) |applied| {
 		stack.append(applied)
 			catch unreachable;
@@ -1481,9 +1580,24 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: Buffer(Bind), c
 			catch unreachable;
 	}
 	if (current.bind.tag == .compile){
-		metaprogram(new, outer_binds, mem, true);
+		_ = metaprogram(new, outer_binds, mem, true);
 	}
 	return index;
+}
+
+pub fn comptime_to_token(tok: Token) ParseError!Token {
+	var val: u64 = 0;
+	switch (tok.tag){
+		.R0 => { val = vm.mem[vm.r0]; },
+		.R1 => { val = vm.mem[vm.r1]; },
+		.R2 => { val = vm.mem[vm.r2]; },
+		.R3 => { val = vm.mem[vm.r3]; },
+		.IDENTIFIER => { val = vm.mem[hash_global_enum(tok)]; },
+		else => {
+			return ParseError.UnexpectedToken;
+		}
+	}
+	unreachable;
 }
 
 pub fn new_uid(mem: *const std.mem.Allocator) []u8 {
@@ -1685,13 +1799,19 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 }
 
 pub fn hash_global_enum(token: Token) u64 {
-	if (iden_hashes.get(token.text)) |id| {
-		return id;
-	}
-	iden_hashes.put(token.text, current_iden)
-		catch unreachable;
-	current_iden += 1;
-	return current_iden-1;
+	const value = std.fmt.parseInt(u64, token.text, 10) catch {
+		if (persistent.get(token.text)) |val| {
+			return val;
+		}
+		if (iden_hashes.get(token.text)) |id| {
+			return id;
+		}
+		iden_hashes.put(token.text, current_iden)
+			catch unreachable;
+		current_iden += 1;
+		return current_iden-1;
+	};
+	return value;
 }
 
 pub fn show_instructions(instructions: Buffer(Instruction)) void {
@@ -1957,6 +2077,7 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 				ip += 1;
 			},
 			.interrupt => {
+				//TODO interrupts
 				std.debug.print("interrupted\n", .{});
 				ip += 1;
 			}
@@ -2022,4 +2143,10 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 	//}
 //}
 //
+
+//TODO serialization properly
+//TODO loading
+//TODO ip handling and comptime binding constants, maybe have the hoist replace split work as hoist computes and raise moved ther value to token level?
+//TODO more instructions
+//TODO emulated hardware components of the virtual computer
 ////TODO make hoisting metadata concatenative rather than overwriting
