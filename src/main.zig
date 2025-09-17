@@ -1394,11 +1394,17 @@ pub fn move_data(run: *Buffer(Token), comp: *const Buffer(Token), mem: *const st
 				return ParseError.UnexpectedToken;
 			}
 			const name = current.bind.args.items[0];
-			persistent.put(name.name.text, val64(loc) catch |err| {
-				std.debug.print("Encountered error in comptime move value {}\n", .{err});
-				return ParseError.UnexpectedToken;
-			}) catch unreachable;
-			return;
+			if (persistent.get(name.name.text)) |val| {
+				token = mk_token_from_u64(mem, val);
+			}
+			else{
+				const val = val64(loc) catch |err| {
+					std.debug.print("Encountered error in comptime move value {}\n", .{err});
+					return ParseError.UnexpectedToken;
+				};
+				persistent.put(name.name.text, val) catch unreachable;
+				token = mk_token_from_u64(mem, val);
+			}
 		}
 		run.append(token)
 			catch unreachable;
