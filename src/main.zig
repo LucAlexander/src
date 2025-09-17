@@ -46,7 +46,7 @@ pub fn main() !void {
 	show_tokens(tokens);
 	std.debug.print("initial------------------------------\n", .{});
 	var binds = Buffer(Bind).init(mem);
-	_ = metaprogram(&tokens, &binds, &mem, false);
+	_ = metaprogram(&tokens, &binds, &mem, true);
 }
 
 pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool) ?*const Buffer(Token) {
@@ -123,10 +123,10 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 			return null;
 		};
 		show_instructions(instructions);
-		interpret(instructions) catch |err| {
-			std.debug.print("Runtime Error {}\n", .{err});
-			return null;
-		};
+		//interpret(instructions) catch |err| {
+			//std.debug.print("Runtime Error {}\n", .{err});
+			//return null;
+		//};
 	}
 	else{
 		std.debug.print("Finished computation\n", .{});
@@ -158,6 +158,7 @@ const TOKEN = enum {
 	OPTIONAL,
 	UNIQUE,
 	HOIST,
+	LABEL,
 	MOV,
 	LIT,
 	COMP_MOVE,
@@ -255,6 +256,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	token_map.put("bind_", .BIND_COMP) catch unreachable;
 	token_map.put("_bind", .BIND_PATTERN) catch unreachable;
 	token_map.put("...", .ELIPSES) catch unreachable;
+	token_map.put("label", .LABEL) catch unreachable;
 	token_map.put("mov", .MOV) catch unreachable;
 	token_map.put("CMOVE", .COMP_MOVE) catch unreachable;
 	token_map.put("CSTORE", .COMP_STORE) catch unreachable;
@@ -1681,73 +1683,156 @@ const Instruction = union(enum) {
 pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) ParseError!Buffer(Instruction) {
 	var ops = Buffer(Instruction).init(mem.*);
 	var token_index: u64 = 0;
-	while (token_index < tokens.items.len){
-		skip_whitespace(tokens.items, &token_index) catch {
-			return ops;
-		};
-		if (token_index > tokens.items.len){
-			std.debug.print("Expected opcode, found end of file\n", .{});
-			return ParseError.UnexpectedEOF;
-		}
-		const token = tokens.items[token_index];
-		token_index += 1;
-		switch (token.tag){
-			.MOV => {
-				ops.append(
-					Instruction{
-						.move=.{
-							.dest=try parse_location(mem, tokens, &token_index),
-							.src=try parse_location(mem, tokens, &token_index)
+	var labels = std.StringHashMap(u64).init(mem.*);
+	var iteration:u64 = 0;
+	while (iteration < 2) : (iteration += 1){
+		ops.clearRetainingCapacity();
+		while (token_index < tokens.items.len){
+			skip_whitespace(tokens.items, &token_index) catch {
+				return ops;
+			};
+			if (token_index > tokens.items.len){
+				std.debug.print("Expected opcode, found end of file\n", .{});
+				return ParseError.UnexpectedEOF;
+			}
+			var token = tokens.items[token_index];
+			token_index += 1;
+			switch (token.tag){
+				.MOV => {
+					ops.append(
+						Instruction{
+							.move=.{
+								.dest=try parse_location_or_label(mem, tokens, &token_index, labels),
+								.src=try parse_location_or_label(mem, tokens, &token_index, labels)
+							}
 						}
+					) catch unreachable;
+				},
+				.LABEL => {
+					try skip_whitespace(tokens.items, &token_index);
+					token = tokens.items[token_index];
+					token_index += 1;
+					if (token.tag != .IDENTIFIER){
+						std.debug.print("Exected identifier for label, found {s}\n", .{token.text});
+						return ParseError.UnexpectedToken;
 					}
-				) catch unreachable;
-			},
-			.ADD, .SUB, .MUL, .DIV => {
-				ops.append(
-					Instruction{
-						.alu=.{
-							.tag = token.tag,
-							.dest=try parse_location(mem, tokens, &token_index),
-							.left=try parse_location(mem, tokens, &token_index),
-							.right=try parse_location(mem, tokens, &token_index)
+					labels.put(token.text, ops.items.len) catch unreachable;
+					if (token_index == tokens.items.len){
+						std.debug.print("Expected instruction following label\n", .{});
+						return ParseError.UnexpectedEOF;
+					}
+				},
+				.ADD, .SUB, .MUL, .DIV => {
+					ops.append(
+						Instruction{
+							.alu=.{
+								.tag = token.tag,
+								.dest=try parse_location_or_label(mem, tokens, &token_index, labels),
+								.left=try parse_location_or_label(mem, tokens, &token_index, labels),
+								.right=try parse_location_or_label(mem, tokens, &token_index, labels)
+							}
 						}
-					}
-				) catch unreachable;
-			},
-			.CMP => {
-				ops.append(
-					Instruction{
-						.compare=.{
-							.left=try parse_location(mem, tokens, &token_index),
-							.right=try parse_location(mem, tokens, &token_index)
+					) catch unreachable;
+				},
+				.CMP => {
+					ops.append(
+						Instruction{
+							.compare=.{
+								.left=try parse_location_or_label(mem, tokens, &token_index, labels),
+								.right=try parse_location_or_label(mem, tokens, &token_index, labels)
+							}
 						}
-					}
-				) catch unreachable;
-			},
-			.JMP, .JLT, .JGT, .JLE, .JGE, .JZ, .JNZ, .JEQ, .JNE => {
-				ops.append(
-					Instruction{
-						.jump=.{
-							.tag=token.tag,
-							.dest=try parse_location(mem, tokens, &token_index)
+					) catch unreachable;
+				},
+				.JMP, .JLT, .JGT, .JLE, .JGE, .JZ, .JNZ, .JEQ, .JNE => {
+					ops.append(
+						Instruction{
+							.jump=.{
+								.tag=token.tag,
+								.dest=try parse_location_or_label(mem, tokens, &token_index, labels)
+							}
 						}
-					}
-				) catch unreachable;
-			},
-			.INT => {
-				ops.append(
-					Instruction{
-						.interrupt={}
-					}
-				) catch unreachable;
-			},
-			else => {
-				std.debug.print("Expected opcode, found {s}\n", .{token.text});
-				return ParseError.UnexpectedToken;
+					) catch unreachable;
+				},
+				.INT => {
+					ops.append(
+						Instruction{
+							.interrupt={}
+						}
+					) catch unreachable;
+				},
+				else => {
+					std.debug.print("Expected opcode, found {s}\n", .{token.text});
+					return ParseError.UnexpectedToken;
+				}
 			}
 		}
 	}
 	return ops;
+}
+
+pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64, labels: std.StringHashMap(u64)) ParseError!Location {
+	try skip_whitespace(tokens.items, token_index);
+	if (token_index.* > tokens.items.len){
+		std.debug.print("Expected operand for instruction, found end of file\n", .{});
+		return ParseError.UnexpectedEOF;
+	}
+	var token = tokens.items[token_index.*];
+	if (labels.get(token.text)) |label_val| {
+		token_index.* += 1;
+		return Location {.literal=label_val};
+	}
+	if (token.tag == .OPEN_BRACK){
+		token_index.* += 1;
+		const reference = try parse_location(mem, tokens, token_index);
+		const location = mem.create(Location) catch
+			unreachable;
+		location.* = reference;
+		if (tokens.items[token_index.*].tag != .CLOSE_BRACK){
+			std.debug.print("Expected close bracket for dereferenced location\n", .{});
+			return ParseError.UnexpectedToken;
+		}
+		token_index.* += 1;
+		return Location{
+			.dereference=location
+		};
+	}
+	switch (token.tag){
+		.R0, .R1, .R2, .R3 => {
+			token_index.* += 1;
+			return Location{
+				.register=token.tag
+			};
+		},
+		.IP => {
+			token_index.* += 1;
+			return Location {
+				.literal=0
+			};
+		},
+		.IDENTIFIER => {
+			token_index.* += 1;
+			return Location{
+				.immediate = hash_global_enum(token)
+			};
+		},
+		.LIT => {
+			token_index.* += 1;
+			token = tokens.items[token_index.*];
+			token_index.* += 1;
+			if (token.tag != .IDENTIFIER) {
+				std.debug.print("Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
+				return ParseError.UnexpectedToken;
+			}
+			return Location{
+				.literal = hash_global_enum(token)
+			};
+		},
+		else => {
+			std.debug.print("Expected operand, found {s}\n", .{token.text});
+			return ParseError.UnexpectedToken;
+		}
+	}
 }
 
 pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64) ParseError!Location {
@@ -1777,6 +1862,12 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 			token_index.* += 1;
 			return Location{
 				.register=token.tag
+			};
+		},
+		.IP => {
+			token_index.* += 1;
+			return Location {
+				.literal=0
 			};
 		},
 		.IDENTIFIER => {
@@ -2152,7 +2243,6 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 
 //TODO serialization properly
 //TODO loading
-//TODO ip handling and comptime binding constants, maybe have the hoist replace split work as hoist computes and raise moved ther value to token level?
 //TODO more instructions
 //TODO emulated hardware components of the virtual computer
 ////TODO make hoisting metadata concatenative rather than overwriting
