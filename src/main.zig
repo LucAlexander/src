@@ -7,6 +7,7 @@ var iden_hashes = std.StringHashMap(u64).init(std.heap.page_allocator);
 var current_iden: u64 = 0;
 
 var persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
+var comp_persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
 
 const mem_size = 0x1000;
 
@@ -142,7 +143,8 @@ const ParseError = error {
 	PrematureEnd,
 	UnexpectedToken,
 	UnexpectedEOF,
-	AlternateUnmatchable
+	AlternateUnmatchable,
+	ConstMatched
 };
 
 const TOKEN = enum {
@@ -162,7 +164,7 @@ const TOKEN = enum {
 	MOV,
 	LIT,
 	COMP_MOVE,
-	COMP_STORE,
+	EQUAL,
 	ADD, SUB, MUL, DIV, CMP,
 	JMP,
 	JLT, JGT, JLE, JGE,
@@ -207,6 +209,7 @@ const Bind = struct {
 		compile,
 		pattern
 	},
+	persistent: bool,
 	precedence: u8,
 	args: Buffer(Arg),
 	hoist: Buffer(Token),
@@ -259,7 +262,6 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	token_map.put("label", .LABEL) catch unreachable;
 	token_map.put("mov", .MOV) catch unreachable;
 	token_map.put("CMOVE", .COMP_MOVE) catch unreachable;
-	token_map.put("CSTORE", .COMP_STORE) catch unreachable;
 	token_map.put("add", .ADD) catch unreachable;
 	token_map.put("sub", .SUB) catch unreachable;
 	token_map.put("mul", .MUL) catch unreachable;
@@ -312,6 +314,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				':' => {break :blk .IS_OF;},
 				'+' => {break :blk .ARGUMENT;},
 				'-' => {break :blk .EXCLUSION;},
+				'=' => {break :blk .EQUAL;},
 				else => {break :blk .IDENTIFIER;}
 			}
 			break :blk .IDENTIFIER;
@@ -387,6 +390,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 	);
 	var bind = Bind{
 		.tag = .rewrite,
+		.persistent=false,
 		.precedence=0,
 		.args=Buffer(Arg).init(mem.*),
 		.hoist=Buffer(Token).init(mem.*),
@@ -411,14 +415,37 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 	while (token_index.* < tokens.len){
 		try skip_whitespace(tokens, token_index);
 		const token = &tokens[token_index.*];
-		if (token.tag == .OPEN_BRACE){
+		if (token.tag == .OPEN_BRACE or token.tag == .EQUAL){
 			break;
 		}
 		bind.args.append(try parse_arg(mem, tokens, token_index))
 			catch unreachable;
 	}
 	try skip_whitespace(tokens, token_index);
-	std.debug.assert(tokens[token_index.*].tag == .OPEN_BRACE);
+	const eq = tokens[token_index.*];
+	if (eq.tag == .EQUAL){
+		token_index.* += 1;
+		var tmp_buffer = Buffer(Token).init(mem.*);
+		defer tmp_buffer.deinit();
+		try tmp_buffer.appendSlice(tokens);
+		const loc = try parse_location(mem, &tmp_buffer, token_index);
+		const val = val64(loc) catch |err| {
+			std.debug.print("Encountered error in persistence binding: {}\n", .{err});
+			return ParseError.UnexpectedToken;
+		};
+		if (bind.tag == .compile){
+			comp_persistent.put(bind.args.items[0].name.text, val) catch unreachable;
+		}
+		else{
+			persistent.put(bind.args.items[0].name.text, val) catch unreachable;
+		}
+		bind.persistent = true;
+		return bind;
+	}
+	else if (eq.tag != .OPEN_BRACE){
+		std.debug.print("Expected open brace to define bind replacement segment, found {s}\n", .{eq.text});
+		return ParseError.UnexpectedToken;
+	}
 	token_index.* += 1;
 	var depth: u64 = 0;
 	while (token_index.* < tokens.len){
@@ -985,7 +1012,7 @@ pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precede
 	while (i < program.text.items.len){
 		var found = false;
 		for (program.binds.items) |*bind| {
-			if (bind.precedence != precedence){
+			if (bind.precedence != precedence or bind.persistent){
 				continue;
 			}
 			if (apply_bind(mem, bind, program.text.items, &i)) |applied| {
@@ -1342,7 +1369,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 			const data = metaprogram(new, outer_binds, mem, false);
 			//NOTE this reduces the non hoist to unparsed token data
 			if (data) |tokens| {
-				try move_data(input_new, tokens, mem, current);
+				try move_data(input_new, tokens, mem);
 			}
 		}
 		else{
@@ -1353,7 +1380,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 	return index;
 }
 
-pub fn move_data(run: *Buffer(Token), comp: *const Buffer(Token), mem: *const std.mem.Allocator, current: AppliedBind) ParseError!void {
+pub fn move_data(run: *Buffer(Token), comp: *const Buffer(Token), mem: *const std.mem.Allocator) ParseError!void {
 	var token_index: u64 = 0;
 	while (token_index < comp.items.len){
 		skip_whitespace(comp.items, &token_index) catch {
@@ -1377,36 +1404,6 @@ pub fn move_data(run: *Buffer(Token), comp: *const Buffer(Token), mem: *const st
 				std.debug.print("Encountered error in comptime move value {}\n", .{err});
 				return ParseError.UnexpectedToken;
 			});
-		}
-		else if (token.tag == .COMP_STORE){
-			const loc = try parse_location(mem, comp, &token_index);
-			token = comp.items[token_index];
-			token_index += 1;
-			if (token.tag != .COMP_STORE){
-				std.debug.print("Expected end of comp time store value, found {s}\n", .{token.text});
-				return ParseError.UnexpectedToken;
-			}
-			if (token_index != comp.items.len){
-				token = comp.items[token_index];
-				std.debug.print("Expected end of comp time raise section, found {s}\n", .{token.text});
-				return ParseError.UnexpectedToken;
-			}
-			if (current.bind.args.items.len > 1){
-				std.debug.print("Expected target of persistent comptime storage to be single token\n", .{});
-				return ParseError.UnexpectedToken;
-			}
-			const name = current.bind.args.items[0];
-			if (persistent.get(name.name.text)) |val| {
-				token = mk_token_from_u64(mem, val);
-			}
-			else{
-				const val = val64(loc) catch |err| {
-					std.debug.print("Encountered error in comptime move value {}\n", .{err});
-					return ParseError.UnexpectedToken;
-				};
-				persistent.put(name.name.text, val) catch unreachable;
-				token = mk_token_from_u64(mem, val);
-			}
 		}
 		run.append(token)
 			catch unreachable;
@@ -2245,4 +2242,6 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 //TODO loading
 //TODO more instructions
 //TODO emulated hardware components of the virtual computer
-////TODO make hoisting metadata concatenative rather than overwriting
+//TODO make hoisting metadata concatenative rather than overwriting
+
+// TODO we let labels be labels for now, we keep the move segment but remove the store segment and treat store as a separate case, we make a second persistence hash
