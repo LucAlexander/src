@@ -51,7 +51,7 @@ pub fn main() !void {
 	_ = metaprogram(&tokens, &binds, &mem, true);
 }
 
-pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool) ?*const Buffer(Token) {
+pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool) ?Buffer(Token) {
 	const allocator = std.heap.page_allocator;
 	var main_aux = std.heap.ArenaAllocator.init(allocator);
 	var main_txt = std.heap.ArenaAllocator.init(allocator);
@@ -81,17 +81,14 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 			};
 			show_program(program);
 			std.debug.print("parsed--------------------------\n", .{});
-			if (done){
-				break;
-			}
 			if (program.text == &text){
-				token_stream = apply_binds(mem, &text, &auxil, &program) catch |err| {
+				token_stream = apply_binds(mem, &text, &auxil, &program, &done) catch |err| {
 					std.debug.print("Parse Error {}\n", .{err});
 					return null;
 				};
 			}
 			else {
-				token_stream = apply_binds(mem, &auxil, &text, &program) catch |err| {
+				token_stream = apply_binds(mem, &auxil, &text, &program, &done) catch |err| {
 					std.debug.print("Parse Error {}\n", .{err});
 					return null;
 				};
@@ -125,19 +122,14 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 			return null;
 		};
 		show_instructions(instructions);
-		//interpret(instructions) catch |err| {
-			//std.debug.print("Runtime Error {}\n", .{err});
-			//return null;
-		//};
+		interpret(instructions) catch |err| {
+			std.debug.print("Runtime Error {}\n", .{err});
+			return null;
+		};
 	}
-	else{
-		std.debug.print("Finished computation\n", .{});
-		//serialize(mem, instructions) catch |err| {
-			//std.debug.print("Write Error {}\n", .{err});
-			//return;
-		//};
-	}
-	return token_stream;
+	var stream = Buffer(Token).init(mem.*);
+	stream.appendSlice(token_stream.items) catch unreachable;
+	return stream;
 }
 
 const ParseError = error {
@@ -1017,7 +1009,10 @@ pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precede
 	var i: u64 = 0;
 	while (i < program.text.items.len){
 		var found = false;
-		for (program.binds.items) |*bind| {
+		var bind_index: u64 = program.binds.items.len;
+		while (bind_index > 0){
+			const bind = &program.binds.items[bind_index-1];
+			bind_index -= 1;
 			if (bind.precedence != precedence or bind.persistent){
 				continue;
 			}
@@ -1034,7 +1029,7 @@ pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precede
 	return buffer;
 }
 
-pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buffer(Token), program: *ProgramText) ParseError!*Buffer(Token) {
+pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buffer(Token), program: *ProgramText, done: *bool) ParseError!*Buffer(Token) {
 	var precedence: u64 = blk: {
 		var max: u64 = '0';
 		for (program.binds.items) |*bind| {
@@ -1057,6 +1052,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 			}
 			continue;
 		}
+		done.* = false;
 		new.clearRetainingCapacity();
 		var i: u64 = 0;
 		var token_index:u64 = 0;
@@ -1378,7 +1374,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 			comp_metaprogram = save;
 			//NOTE this reduces the non hoist to unparsed token data
 			if (data) |tokens| {
-				try move_data(input_new, tokens, mem);
+				try move_data(input_new, &tokens, mem);
 			}
 		}
 		else{
@@ -2105,7 +2101,8 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 		const inst = instructions.items[ip];
 		switch (inst){
 			.move => {
-				try loc64(inst.move.dest, try val64(inst.move.src));
+				const val = try val64(inst.move.src);
+				try loc64(inst.move.dest, val);
 				ip += 1;
 			},
 			.compare => {
@@ -2193,14 +2190,20 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 				ip += 1;
 			},
 			.interrupt => {
-				//TODO interrupts
-				std.debug.print("interrupted\n", .{});
+				//TODO propper interrupts
 				ip += 1;
+				if (vm.mem[vm.r0] == 0){
+					const pos = vm.mem[vm.r1];
+					const len = vm.mem[vm.r2];
+					for (0..len) |i| {
+						std.debug.print("{c}", .{vm.mem[pos+i]});
+					}
+				}
 			}
 		}
 	}
 }
-//
+
 //pub fn serialize(mem: *const std.mem.Allocator, instructions: Buffer(Instruction)) !void {
 	//var file = try std.fs.cwd().createFile(
 		//"out.bin",
@@ -2263,7 +2266,12 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 //TODO serialization properly
 //TODO loading
 //TODO more instructions
+	//alu shifts
+	//logical operators
+	//mov instructions
 //TODO emulated hardware components of the virtual computer
 //TODO make hoisting metadata concatenative rather than overwriting
 //TODO metaprogram parse operation as an interrupt
+	// interrupts: write n to file, read n from file, get input from keyboard/mouse, send info to screen
+//TODO think about debugging infrastructure
 
