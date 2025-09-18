@@ -984,6 +984,9 @@ pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, t
 	var list = Buffer(*ArgTree).init(mem.*);
 	var uniques = std.StringHashMap([]u8).init(mem.*);
 	for (bind.args.items) |*arg| {
+		if (token_index.* >= tokens.len){
+			return null;
+		}
 		const sequence = apply_rule(mem, &uniques, arg, tokens, token_index.*, 0) catch {
 			token_index.* = save_index;
 			return null;
