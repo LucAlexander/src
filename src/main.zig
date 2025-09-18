@@ -36,7 +36,7 @@ var vm: VM = VM.init();
 
 pub fn main() !void {
 	const allocator = std.heap.page_allocator;
-	var infile = try std.fs.cwd().openFile("bytecode.src", .{});
+	var infile = try std.fs.cwd().openFile("semantics.src", .{});
 	defer infile.close();
 	const stat = try infile.stat();
 	const contents = try infile.readToEndAlloc(allocator, stat.size+1);
@@ -438,7 +438,12 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 			comp_persistent.put(bind.args.items[0].name.text, val) catch unreachable;
 		}
 		else{
-			persistent.put(bind.args.items[0].name.text, val) catch unreachable;
+			if (comp_metaprogram){
+				comp_persistent.put(bind.args.items[0].name.text, val) catch unreachable;
+			}
+			else{
+				persistent.put(bind.args.items[0].name.text, val) catch unreachable;
+			}
 		}
 		bind.persistent = true;
 		return bind;
@@ -2260,5 +2265,5 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 //TODO more instructions
 //TODO emulated hardware components of the virtual computer
 //TODO make hoisting metadata concatenative rather than overwriting
+//TODO metaprogram parse operation as an interrupt
 
-// TODO perssitence access among comp/runtime
