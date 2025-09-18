@@ -8,6 +8,7 @@ var current_iden: u64 = 0;
 
 var persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
 var comp_persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
+var comp_metaprogram: bool = false;
 
 const mem_size = 0x1000;
 
@@ -1366,7 +1367,10 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 			defer dummy_stack.deinit();
 			_ = try rewrite_hoist(mem, outer_binds, current, &dummy, 0, false, false, &dummy_stack);
 			//NOTE rewrite hoist should now metaprogram silently on just the hoist content
+			const save = comp_metaprogram;
+			comp_metaprogram = true;
 			const data = metaprogram(new, outer_binds, mem, false);
+			comp_metaprogram = save;
 			//NOTE this reduces the non hoist to unparsed token data
 			if (data) |tokens| {
 				try move_data(input_new, tokens, mem);
@@ -1374,7 +1378,10 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 		}
 		else{
 			std.debug.print("u\n", .{});
+			const save = comp_metaprogram;
+			comp_metaprogram = true;
 			_ = metaprogram(new, outer_binds, mem, true);
+			comp_metaprogram = save;
 		}
 	}
 	return index;
@@ -1585,7 +1592,10 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 			catch unreachable;
 	}
 	if (current.bind.tag == .compile){
+		const save = comp_metaprogram;
+		comp_metaprogram = true;
 		_ = metaprogram(new, outer_binds, mem, true);
+		comp_metaprogram = save;
 	}
 	return index;
 }
@@ -1894,8 +1904,15 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 
 pub fn hash_global_enum(token: Token) u64 {
 	const value = std.fmt.parseInt(u64, token.text, 10) catch {
-		if (persistent.get(token.text)) |val| {
-			return val;
+		if (comp_metaprogram){
+			if (comp_persistent.get(token.text)) |val| {
+				return val;
+			}
+		}
+		else{
+			if (persistent.get(token.text)) |val| {
+				return val;
+			}
 		}
 		if (iden_hashes.get(token.text)) |id| {
 			return id;
@@ -2244,4 +2261,4 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 //TODO emulated hardware components of the virtual computer
 //TODO make hoisting metadata concatenative rather than overwriting
 
-// TODO we let labels be labels for now, we keep the move segment but remove the store segment and treat store as a separate case, we make a second persistence hash
+// TODO perssitence access among comp/runtime
