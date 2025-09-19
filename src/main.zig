@@ -472,7 +472,11 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 }
 
 pub fn split_hoist(mem: *const std.mem.Allocator, bind: *Bind) ParseError!void {
-	for (bind.text.items, 0..) |tok, i| {
+	var token_index = bind.text.items.len;
+	while (token_index > 0){
+		const i = token_index-1;
+		const tok = bind.text.items[i];
+		token_index -= 1;
 		if (tok.tag == .HOIST){
 			var index: u64 = 0;
 			while (index < i){
@@ -2277,4 +2281,5 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 //TODO metaprogram parse operation as an interrupt
 	// interrupts: write n to file, read n from file, get input from keyboard/mouse, send info to screen
 //TODO think about debugging infrastructure
+//TODO escaped character issues
 
