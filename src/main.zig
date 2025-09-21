@@ -1,6 +1,8 @@
 const std = @import("std");
 const Buffer = std.ArrayList;
 
+const debug = true;
+
 const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 var iden_hashes = std.StringHashMap(u64).init(std.heap.page_allocator);
@@ -46,7 +48,9 @@ pub fn main() !void {
 	const mem = main_mem.allocator();
 	const tokens = tokenize(&mem, contents);
 	show_tokens(tokens);
-	std.debug.print("initial------------------------------\n", .{});
+	if (debug){
+		std.debug.print("initial------------------------------\n", .{});
+	}
 	var binds = Buffer(Bind).init(mem);
 	_ = metaprogram(&tokens, &binds, &mem, true);
 }
@@ -80,7 +84,9 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 				return null;
 			};
 			show_program(program);
-			std.debug.print("parsed--------------------------\n", .{});
+			if (debug){
+				std.debug.print("parsed--------------------------\n", .{});
+			}
 			if (program.text == &text){
 				token_stream = apply_binds(mem, &text, &auxil, &program, &done) catch |err| {
 					std.debug.print("Parse Error {}\n", .{err});
@@ -94,23 +100,25 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 				};
 			}
 			show_tokens(token_stream.*);
-			std.debug.print("applied binds-------------------\n", .{});
+			if (debug){
+				std.debug.print("applied binds-------------------\n", .{});
+			}
 		}
-		if (program.text == &text){
-			redo = fill_hoist(mem, &auxil, &program) catch |err| {
-				std.debug.print("Hoist Error {}\n", .{err});
-				return null;
-			};
-			show_tokens(auxil);
+		redo = fill_hoist(mem, program.text, token_stream, program.binds) catch |err| {
+			std.debug.print("Hoist Error {}\n", .{err});
+			return null;
+		};
+		show_tokens(program.text.*);
+		if (debug){
 			std.debug.print("hoisted--------------------------\n", .{});
 		}
-		else {
-			redo = fill_hoist(mem, &text, &program) catch |err| {
-				std.debug.print("Hoist Error {}\n", .{err});
-				return null;
-			};
-			show_tokens(text);
-			std.debug.print("hoisted--------------------------\n", .{});
+		if (program.text == &auxil){
+			program.text = &text;
+			token_stream = &auxil;
+		}
+		else{
+			program.text = &auxil;
+			token_stream = &text;
 		}
 		if (redo == false){
 			break;
@@ -122,6 +130,9 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 			return null;
 		};
 		show_instructions(instructions);
+		if (debug){
+			std.debug.print("parsed bytecode--------------------\n", .{});
+		}
 		interpret(instructions) catch |err| {
 			std.debug.print("Runtime Error {}\n", .{err});
 			return null;
@@ -219,12 +230,24 @@ const ArgTree = struct {
 	expansion_len: u64,
 	
 	pub fn init(mem: *const std.mem.Allocator, arg: Arg, exp: ?[]Token) *ArgTree {
+		if (exp) |e| {
+			const tree = ArgTree {
+				.arg=arg,
+				.expansion=e,
+				.alternate=0,
+				.nodes=Buffer(*ArgTree).init(mem.*),
+				.expansion_len = e.len
+			};
+			const loc = mem.create(ArgTree) catch unreachable;
+			loc.* = tree;
+			return loc;
+		}
 		const tree = ArgTree {
 			.arg=arg,
 			.expansion=exp,
 			.alternate=0,
 			.nodes=Buffer(*ArgTree).init(mem.*),
-			.expansion_len = exp.?.len
+			.expansion_len = 0
 		};
 		const loc = mem.create(ArgTree) catch unreachable;
 		loc.* = tree;
@@ -350,6 +373,9 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 }
 
 pub fn show_tokens(tokens: Buffer(Token)) void {
+	if (!debug){
+		return;
+	}
 	for (tokens.items) |*token| {
 		std.debug.print("{} {s}\n", .{token.tag, token.text});
 	}
@@ -696,6 +722,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 	const open_loc = mem.create(Arg)
 		catch unreachable;
 	open_loc.* = try parse_arg(mem, tokens, token_index);
+	try skip_whitespace(tokens, token_index);
 	if (tokens[token_index.*].tag != .ELIPSES){
 		std.debug.print("Expected elipses ... for grouping expression, found {s}\n", .{tokens[token_index.*].text});
 		return ParseError.UnexpectedToken;
@@ -744,6 +771,9 @@ pub fn report_error(token_stream: *const Buffer(Token), token_index: u64) void{
 }
 
 pub fn show_program(program: ProgramText) void {
+	if (!debug){
+		return;
+	}
 	show_tokens(program.text.*);
 	std.debug.print("end text -----------\n", .{});
 	for (program.binds.items) |bind| {
@@ -763,6 +793,9 @@ pub fn show_program(program: ProgramText) void {
 }
 
 pub fn show_arg(arg: Arg) void {
+	if (!debug){
+		return;
+	}
 	std.debug.print("{} {s}:", .{arg.tag, arg.name.text});
 	switch (arg.pattern){
 		.token => {},
@@ -1385,11 +1418,13 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 			}
 		}
 		else{
-			std.debug.print("u\n", .{});
 			const save = comp_metaprogram;
 			comp_metaprogram = true;
 			_ = metaprogram(new, outer_binds, mem, true);
 			comp_metaprogram = save;
+		}
+		if (debug){
+			std.debug.print("Ran compile time segment\n", .{});
 		}
 	}
 	return index;
@@ -1608,21 +1643,6 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 	return index;
 }
 
-pub fn comptime_to_token(tok: Token) ParseError!Token {
-	var val: u64 = 0;
-	switch (tok.tag){
-		.R0 => { val = vm.mem[vm.r0]; },
-		.R1 => { val = vm.mem[vm.r1]; },
-		.R2 => { val = vm.mem[vm.r2]; },
-		.R3 => { val = vm.mem[vm.r3]; },
-		.IDENTIFIER => { val = vm.mem[hash_global_enum(tok)]; },
-		else => {
-			return ParseError.UnexpectedToken;
-		}
-	}
-	unreachable;
-}
-
 pub fn new_uid(mem: *const std.mem.Allocator) []u8 {
 	var new = mem.alloc(u8, uid.len) catch unreachable;
 	var i:u64 = 0;
@@ -1697,11 +1717,11 @@ const Instruction = union(enum) {
 
 pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) ParseError!Buffer(Instruction) {
 	var ops = Buffer(Instruction).init(mem.*);
-	var token_index: u64 = 0;
 	var labels = std.StringHashMap(u64).init(mem.*);
 	var iteration:u64 = 0;
 	while (iteration < 2) : (iteration += 1){
 		ops.clearRetainingCapacity();
+		var token_index: u64 = 0;
 		while (token_index < tokens.items.len){
 			skip_whitespace(tokens.items, &token_index) catch {
 				return ops;
@@ -1933,41 +1953,54 @@ pub fn hash_global_enum(token: Token) u64 {
 	return value;
 }
 
-pub fn show_instructions(instructions: Buffer(Instruction)) void {
-	for (instructions.items) |*inst| {
-		switch (inst.*){
-			.move => {
-				std.debug.print("mov ", .{});
-				show_location(&inst.move.dest);
-				show_location(&inst.move.src);
-				std.debug.print("\n", .{});
-			},
-			.compare => {
-				std.debug.print("cmp ", .{});
-				show_location(&inst.compare.left);
-				show_location(&inst.compare.right);
-				std.debug.print("\n", .{});
-			},
-			.alu => {
-				std.debug.print("{} ", .{inst.alu.tag});
-				show_location(&inst.alu.dest);
-				show_location(&inst.alu.left);
-				show_location(&inst.alu.right);
-				std.debug.print("\n", .{});
-			},
-			.jump => {
-				std.debug.print("{} ", .{inst.jump.tag});
-				show_location(&inst.jump.dest);
-				std.debug.print("\n", .{});
-			},
-			.interrupt => {
-				std.debug.print("int\n", .{});
-			}
+pub fn show_instruction(inst: *const Instruction) void {
+	if (!debug){
+		return;
+	}
+	switch (inst.*){
+		.move => {
+			std.debug.print("mov ", .{});
+			show_location(&inst.move.dest);
+			show_location(&inst.move.src);
+			std.debug.print("\n", .{});
+		},
+		.compare => {
+			std.debug.print("cmp ", .{});
+			show_location(&inst.compare.left);
+			show_location(&inst.compare.right);
+			std.debug.print("\n", .{});
+		},
+		.alu => {
+			std.debug.print("{} ", .{inst.alu.tag});
+			show_location(&inst.alu.dest);
+			show_location(&inst.alu.left);
+			show_location(&inst.alu.right);
+			std.debug.print("\n", .{});
+		},
+		.jump => {
+			std.debug.print("{} ", .{inst.jump.tag});
+			show_location(&inst.jump.dest);
+			std.debug.print("\n", .{});
+		},
+		.interrupt => {
+			std.debug.print("int\n", .{});
 		}
 	}
 }
 
-pub fn show_location(loc: *Location) void {
+pub fn show_instructions(instructions: Buffer(Instruction)) void {
+	if (!debug){
+		return;
+	}
+	for (instructions.items) |*inst| {
+		show_instruction(inst);
+	}
+}
+
+pub fn show_location(loc: *const Location) void {
+	if (!debug){
+		return;
+	}
 	switch (loc.*){
 		.immediate => {
 			std.debug.print("{} ", .{loc.immediate});
@@ -1986,18 +2019,18 @@ pub fn show_location(loc: *Location) void {
 	}
 }
 
-pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *ProgramText) ParseError!bool {
+pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *const Buffer(Token), binds: *Buffer(Bind)) ParseError!bool {
 	var new = aux;
 	new.clearRetainingCapacity();
 	var hoisted = false;
-	for (program.text.items) |*token| {
+	for (program.items) |*token| {
 		if (token.hoist_data) |hoist| {
 			hoisted = true;
 			var index = new.items.len;
 			var uniques = std.StringHashMap([]u8).init(mem.*);
 			defer uniques.deinit();
 			while (index > 0){
-				const tree = apply_rule(mem, &uniques, &token.hoist_data.?.bind.hoist_token.?, program.text.items, index-1, 0) catch {
+				const tree = apply_rule(mem, &uniques, &token.hoist_data.?.bind.hoist_token.?, program.items, index-1, 0) catch {
 					index -= 1;
 					continue;
 				};
@@ -2013,7 +2046,7 @@ pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *
 					}
 					new.items.len = index-1;
 					var stack = Buffer(*ArgTree).init(mem.*);
-					_ = try rewrite_hoist(mem, program.binds, hoist, new, 0, false, false, &stack);
+					_ = try rewrite_hoist(mem, binds, hoist, new, 0, false, false, &stack);
 					for (temp.items) |relay| {
 						new.append(relay)
 							catch unreachable;
@@ -2106,15 +2139,22 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 	var ip: u64 = 0;
 	while (ip < instructions.items.len){
 		const inst = instructions.items[ip];
+		show_instruction(&inst);
 		switch (inst){
 			.move => {
 				const val = try val64(inst.move.src);
+				if (debug){
+					std.debug.print("src: {}\n", .{val});
+				}
 				try loc64(inst.move.dest, val);
 				ip += 1;
 			},
 			.compare => {
 				const left = try val64(inst.compare.left);
 				const right = try val64(inst.compare.right);
+				if (debug){
+					std.debug.print("left: {}, right: {}\n", .{left, right});
+				}
 				if (left > right) {
 					vm.mem[vm.sr] = 1;
 				}
@@ -2126,10 +2166,38 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 			},
 			.alu => {
 				switch (inst.alu.tag){
-					.ADD => { try loc64(inst.alu.dest, try val64(inst.alu.left) + try val64(inst.alu.right)); },
-					.SUB => { try loc64(inst.alu.dest, try val64(inst.alu.left) - try val64(inst.alu.right)); },
-					.MUL => { try loc64(inst.alu.dest, try val64(inst.alu.left) * try val64(inst.alu.right)); },
-					.DIV => { try loc64(inst.alu.dest, try val64(inst.alu.left) / try val64(inst.alu.right)); },
+					.ADD => {
+						const left = try val64(inst.alu.left);
+						const right = try val64(inst.alu.right);
+						if (debug){
+							std.debug.print("left: {}, right: {}\n", .{left, right});
+						}
+						try loc64(inst.alu.dest, left+right);
+					},
+					.SUB => { 
+						const left = try val64(inst.alu.left);
+						const right = try val64(inst.alu.right);
+						if (debug){
+							std.debug.print("left: {}, right: {}\n", .{left, right});
+						}
+						try loc64(inst.alu.dest, left-right);
+					},
+					.MUL => { 
+						const left = try val64(inst.alu.left);
+						const right = try val64(inst.alu.right);
+						if (debug){
+							std.debug.print("left: {}, right: {}\n", .{left, right});
+						}
+						try loc64(inst.alu.dest, left*right);
+					},
+					.DIV => { 
+						const left = try val64(inst.alu.left);
+						const right = try val64(inst.alu.right);
+						if (debug){
+							std.debug.print("left: {}, right: {}\n", .{left, right});
+						}
+						try loc64(inst.alu.dest, left/right);
+					},
 					else => {
 						return RuntimeError.UnknownALU;
 					}
@@ -2203,7 +2271,7 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 					const pos = vm.mem[vm.r1];
 					const len = vm.mem[vm.r2];
 					for (0..len) |i| {
-						std.debug.print("{c}", .{vm.mem[pos+i]});
+						std.debug.print("{}", .{vm.mem[pos+i]});
 					}
 				}
 			}
@@ -2281,5 +2349,9 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 //TODO metaprogram parse operation as an interrupt
 	// interrupts: write n to file, read n from file, get input from keyboard/mouse, send info to screen
 //TODO think about debugging infrastructure
-//TODO escaped character issues
+
+//TODO swap out vm with new one at runetime occasion
+//TODO introduce propper debugger state
+
+//TODO it concats prematurely
 
