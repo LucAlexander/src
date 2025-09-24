@@ -1792,16 +1792,16 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 					skip_whitespace(tokens.items, token_index) catch {
 						return ops;
 					};
+					token_index.* += 1;
+					skip_whitespace(tokens.items, token_index) catch {
+						return ops;
+					};
 					const name = tokens.items[token_index.*];
 					token_index.* += 1;
 					if (name.tag != .IDENTIFIER){
 						std.debug.print("Expected name for transfer bind, found {s}\n", .{name.text});
 						return ParseError.UnexpectedToken;
 					}
-					skip_whitespace(tokens.items, token_index) catch {
-						return ops;
-					};
-					token_index.* += 1;
 					skip_whitespace(tokens.items, token_index) catch {
 						return ops;
 					};
@@ -1826,10 +1826,14 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 						return ParseError.UnexpectedToken;
 					};
 					if (comp){
+						if (debug){
+							std.debug.print("comp persistent put {s} : {}\n", .{name.text, val});
+						}
 						comp_persistent.put(name.text, val)
 							catch unreachable;
 					}
 					else{
+						std.debug.print("persistent put {s} : {}\n", .{name.text, val});
 						persistent.put(name.text, val)
 							catch unreachable;
 					}
@@ -2119,7 +2123,7 @@ pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *
 				defer uniques.deinit();
 				var found_position = false;
 				while (index > 0){
-					const tree = apply_rule(mem, &uniques, &hoist.bind.hoist_token.?, program.items, index-1, 0) catch {
+					const tree = apply_rule(mem, &uniques, &hoist.bind.hoist_token.?, new.items, index-1, 0) catch {
 						index -= 1;
 						continue;
 					};
@@ -2440,18 +2444,9 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 	//logical operators
 	//mov instructions
 //TODO emulated hardware components of the virtual computer
-//TODO make hoisting metadata concatenative rather than overwriting
 //TODO metaprogram parse operation as an interrupt
 	// interrupts: write n to file, read n from file, get input from keyboard/mouse, send info to screen
 //TODO think about debugging infrastructure
-
-//TODO swap out vm with new one at runetime occasion
 //TODO introduce propper debugger state
 
-//TODO new impementation plan:
-	//move comp to language and run 
-	//split comp run and real run so it can still be a separate language
-	//move bind x = a to language
-	//allow bind label = ip
-
-//TODO allow instructions to be treated as identifierse until parse happens
+//TODO allow instructions to be treated as identifiers until parse happens
