@@ -252,7 +252,7 @@ const ArgTree = struct {
 };
 
 const AppliedBind = struct {
-	bind: *Bind,
+	bind: u64,
 	expansions: Buffer(*ArgTree),
 	uniques: std.StringHashMap([]u8),
 	start_index: u64,
@@ -995,7 +995,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 	unreachable;
 }
 
-pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, token_index: *u64) ?AppliedBind {
+pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, bind_index: u64, tokens: []Token, token_index: *u64) ?AppliedBind {
 	const save_index = token_index.*;
 	var list = Buffer(*ArgTree).init(mem.*);
 	var uniques = std.StringHashMap([]u8).init(mem.*);
@@ -1015,7 +1015,7 @@ pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, tokens: []Token, t
 		}
 	}
 	return AppliedBind{
-		.bind = bind,
+		.bind = bind_index,
 		.expansions=list,
 		.uniques=uniques,
 		.start_index = save_index,
@@ -1035,7 +1035,7 @@ pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precede
 			if (bind.precedence != precedence){
 				continue;
 			}
-			if (apply_bind(mem, bind, program.text.items, &i)) |applied| {
+			if (apply_bind(mem, bind, bind_index, program.text.items, &i)) |applied| {
 				found = true;
 				buffer.append(applied)
 					catch unreachable;
@@ -1230,8 +1230,9 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 	var index: u64 = input_index;
 	var nest_depth: u64 = 0;
 	var first = true;
-	outer: while (index < current.bind.text.items.len) : (index += 1){
-		const token = &current.bind.text.items[index];
+	const current_bind = outer_binds.items[current.bind];
+	outer: while (index < current_bind.text.items.len) : (index += 1){
+		const token = &current_bind.text.items[index];
 		if (altnest){
 			if (token.tag == .ALTERNATE or token.tag == .CLOSE_BRACK){
 				if (nest_depth == 0){
@@ -1258,8 +1259,8 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 		}
 		if (token.tag == .CONCAT){
 			const left = new.items[new.items.len-1].text;
-			if (index+1 < current.bind.text.items.len){
-				const right = current.bind.text.items[index+1].text;
+			if (index+1 < current_bind.text.items.len){
+				const right = current_bind.text.items[index+1].text;
 				const concat = mem.alloc(u8, left.len+right.len)
 					catch unreachable;
 				var i:u64 = 0;
@@ -1279,7 +1280,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 		if (current.uniques.get(token.text)) |id| {
 			if (first){
 				first = false;
-				if (current.bind.hoist_token) |_| {
+				if (current_bind.hoist_token) |_| {
 					var hd = Buffer(AppliedBind).init(mem.*);
 					hd.append(current)
 						catch unreachable;
@@ -1304,8 +1305,8 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 				continue;
 			}
 			if (arg.arg.pattern == Pattern.alternate){
-				if (index < current.bind.text.items.len){
-					if (current.bind.text.items[index+1].tag == .OPEN_BRACK){
+				if (index < current_bind.text.items.len){
+					if (current_bind.text.items[index+1].tag == .OPEN_BRACK){
 						for (arg.nodes.items) |alt_arg| {
 							stack.append(alt_arg)
 								catch unreachable;
@@ -1316,19 +1317,19 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 						index += 2;
 						for (0..arg.alternate) |_| {
 							var depth: u64 = 0;
-							while (index < current.bind.text.items.len) : (index += 1){
-								if (current.bind.text.items[index].tag == .ALTERNATE){
+							while (index < current_bind.text.items.len) : (index += 1){
+								if (current_bind.text.items[index].tag == .ALTERNATE){
 									if (depth == 0){
 										index += 1;
 										break;
 									}
 									continue;
 								}
-								if (current.bind.text.items[index].tag == .OPEN_BRACK){
+								if (current_bind.text.items[index].tag == .OPEN_BRACK){
 									depth += 1;
 									continue;
 								}
-								if (current.bind.text.items[index].tag == .CLOSE_BRACK){
+								if (current_bind.text.items[index].tag == .CLOSE_BRACK){
 									if (depth == 0){
 										std.debug.print("Not enough alternate expansions for alternate applied in bind argument\n", .{});
 										return ParseError.AlternateUnmatchable;
@@ -1339,12 +1340,12 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 						}
 						index = try rewrite(mem, outer_binds, current, new, index, false, true, stack);
 						var depth: u64 = 0;
-						while (index < current.bind.text.items.len) : (index += 1){
-							if (current.bind.text.items[index].tag == .OPEN_BRACK){
+						while (index < current_bind.text.items.len) : (index += 1){
+							if (current_bind.text.items[index].tag == .OPEN_BRACK){
 								depth += 1;
 								continue;
 							}
-							if (current.bind.text.items[index].tag == .CLOSE_BRACK){
+							if (current_bind.text.items[index].tag == .CLOSE_BRACK){
 								if (depth == 0){
 									break;
 								}
@@ -1359,7 +1360,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 					var tmp_tok = tok.*;
 					if (first){
 						first = false;
-						if (current.bind.hoist_token) |_| {
+						if (current_bind.hoist_token) |_| {
 							if (tmp_tok.hoist_data) |_|{
 								tmp_tok.hoist_data.?.append(current)
 									catch unreachable;
@@ -1378,8 +1379,8 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 				continue :outer;
 			}
 			if (arg.arg.pattern == Pattern.variadic){
-				if (index < current.bind.text.items.len){
-					if (current.bind.text.items[index+1].tag == .OPEN_BRACE){
+				if (index < current_bind.text.items.len){
+					if (current_bind.text.items[index+1].tag == .OPEN_BRACE){
 						const save_index = index+1;
 						for (arg.nodes.items) |iter| {
 							for (iter.nodes.items) |iter_arg| {
@@ -1387,12 +1388,12 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 									catch unreachable;
 							}
 							index = try rewrite(mem, outer_binds, current, new, save_index+1, true, false, stack);
-							std.debug.assert(current.bind.text.items.len-1 == index);
+							std.debug.assert(current_bind.text.items.len-1 == index);
 							for (iter.nodes.items) |_| {
 								_ = stack.pop();
 							}
 						}
-						std.debug.assert(current.bind.text.items.len-1 == index);
+						std.debug.assert(current_bind.text.items.len-1 == index);
 						continue :outer;
 					}
 				}
@@ -1401,7 +1402,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 					var tmp_tok = tok.*;
 					if (first){
 						first = false;
-						if (current.bind.hoist_token) |_|{
+						if (current_bind.hoist_token) |_|{
 							if (tmp_tok.hoist_data) |_|{
 								tmp_tok.hoist_data.?.append(current)
 									catch unreachable;
@@ -1427,7 +1428,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 				var tmp_tok = tok.*;
 				if (first){
 					first = false;
-					if (current.bind.hoist_token)|_|{
+					if (current_bind.hoist_token)|_|{
 						if (tmp_tok.hoist_data) |_|{
 							tmp_tok.hoist_data.?.append(current)
 								catch unreachable;
@@ -1448,7 +1449,7 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 		var tmp_tok = token.*;
 		if (first){
 			first = false;
-			if (current.bind.hoist_token)|_|{
+			if (current_bind.hoist_token)|_|{
 				if (tmp_tok.hoist_data) |_|{
 					tmp_tok.hoist_data.?.append(current)
 						catch unreachable;
@@ -1513,8 +1514,9 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 	};
 	var index: u64 = input_index;
 	var nest_depth: u64 = 0;
-	outer: while (index < current.bind.hoist.items.len) : (index += 1){
-		const token = &current.bind.hoist.items[index];
+	var current_bind = outer_binds.items[current.bind];
+	outer: while (index < current_bind.hoist.items.len) : (index += 1){
+		const token = &current_bind.hoist.items[index];
 		if (altnest){
 			if (token.tag == .ALTERNATE or token.tag == .CLOSE_BRACK){
 				if (nest_depth == 0){
@@ -1541,8 +1543,8 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 		}
 		if (token.tag == .CONCAT){
 			const left = new.items[new.items.len-1].text;
-			if (index+1 < current.bind.hoist.items.len){
-				const right = current.bind.hoist.items[index+1].text;
+			if (index+1 < current_bind.hoist.items.len){
+				const right = current_bind.hoist.items[index+1].text;
 				const concat = mem.alloc(u8, left.len+right.len)
 					catch unreachable;
 				var i:u64 = 0;
@@ -1571,8 +1573,8 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 				continue;
 			}
 			if (arg.arg.pattern == Pattern.alternate){
-				if (index < current.bind.hoist.items.len){
-					if (current.bind.hoist.items[index+1].tag == .OPEN_BRACK){
+				if (index < current_bind.hoist.items.len){
+					if (current_bind.hoist.items[index+1].tag == .OPEN_BRACK){
 						for (arg.nodes.items) |alt_arg| {
 							stack.append(alt_arg)
 								catch unreachable;
@@ -1583,19 +1585,19 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 						index += 2;
 						for (0..arg.alternate) |_| {
 							var depth: u64 = 0;
-							while (index < current.bind.hoist.items.len) : (index += 1){
-								if (current.bind.hoist.items[index].tag == .ALTERNATE){
+							while (index < current_bind.hoist.items.len) : (index += 1){
+								if (current_bind.hoist.items[index].tag == .ALTERNATE){
 									if (depth == 0){
 										index += 1;
 										break;
 									}
 									continue;
 								}
-								if (current.bind.hoist.items[index].tag == .OPEN_BRACK){
+								if (current_bind.hoist.items[index].tag == .OPEN_BRACK){
 									depth += 1;
 									continue;
 								}
-								if (current.bind.hoist.items[index].tag == .CLOSE_BRACK){
+								if (current_bind.hoist.items[index].tag == .CLOSE_BRACK){
 									if (depth == 0){
 										std.debug.print("Not enough alternate expansions for alternate applied in bind argument\n", .{});
 										return ParseError.AlternateUnmatchable;
@@ -1606,12 +1608,12 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 						}
 						index = try rewrite(mem, outer_binds, current, new, index, false, true, stack);
 						var depth: u64 = 0;
-						while (index < current.bind.hoist.items.len) : (index += 1){
-							if (current.bind.hoist.items[index].tag == .OPEN_BRACK){
+						while (index < current_bind.hoist.items.len) : (index += 1){
+							if (current_bind.hoist.items[index].tag == .OPEN_BRACK){
 								depth += 1;
 								continue;
 							}
-							if (current.bind.hoist.items[index].tag == .CLOSE_BRACK){
+							if (current_bind.hoist.items[index].tag == .CLOSE_BRACK){
 								if (depth == 0){
 									break;
 								}
@@ -1630,8 +1632,8 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 				continue :outer;
 			}
 			if (arg.arg.pattern == Pattern.variadic){
-				if (index < current.bind.hoist.items.len){
-					if (current.bind.hoist.items[index+1].tag == .OPEN_BRACE){
+				if (index < current_bind.hoist.items.len){
+					if (current_bind.hoist.items[index+1].tag == .OPEN_BRACE){
 						const save_index = index+1;
 						for (arg.nodes.items) |iter| {
 							for (iter.nodes.items) |iter_arg| {
@@ -1639,12 +1641,12 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 									catch unreachable;
 							}
 							index = try rewrite(mem, outer_binds, current, new, save_index+1, true, false, stack);
-							std.debug.assert(current.bind.hoist.items.len-1 == index);
+							std.debug.assert(current_bind.hoist.items.len-1 == index);
 							for (iter.nodes.items) |_| {
 								_ = stack.pop();
 							}
 						}
-						std.debug.assert(current.bind.hoist.items.len-1 == index);
+						std.debug.assert(current_bind.hoist.items.len-1 == index);
 						continue :outer;
 					}
 				}
@@ -2123,7 +2125,7 @@ pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *
 				defer uniques.deinit();
 				var found_position = false;
 				while (index > 0){
-					const tree = apply_rule(mem, &uniques, &hoist.bind.hoist_token.?, new.items, index-1, 0) catch {
+					const tree = apply_rule(mem, &uniques, &binds.items[hoist.bind].hoist_token.?, new.items, index-1, 0) catch {
 						index -= 1;
 						continue;
 					};
