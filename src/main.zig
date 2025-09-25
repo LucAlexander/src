@@ -270,6 +270,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	var token_map = std.StringHashMap(TOKEN).init(mem.*);
 	token_map.put("bind", .BIND) catch unreachable;
 	token_map.put("...", .ELIPSES) catch unreachable;
+	token_map.put(";;;", .HOIST) catch unreachable;
 	var tokens = Buffer(Token).init(mem.*);
 	while (i<text.len){
 		var escape = false;
@@ -298,7 +299,6 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				'%' => {break :blk .WHITESPACE;},
 				'@' => {break :blk .UNIQUE;},
 				'!' => {break :blk .LIT;},
-				';' => {break :blk .HOIST;},
 				':' => {break :blk .IS_OF;},
 				'+' => {break :blk .ARGUMENT;},
 				'-' => {break :blk .EXCLUSION;},
@@ -2141,11 +2141,15 @@ pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *
 	new.clearRetainingCapacity();
 	var hoisted = false;
 	for (program.items) |*token| {
-		if (token.hoist_data) |hoist_data| {
-			for (hoist_data.items) |hoist| {
+		if (token.hoist_data) |*hoist_data| {
+			var hoist_index = hoist_data.items.len;
+			while (hoist_index > 0){
+				hoist_index -= 1;
+				const hoist = hoist_data.items[hoist_index];
 				hoisted = true;
 				var index = new.items.len;
 				var uniques = std.StringHashMap([]u8).init(mem.*);
+				var found = false;
 				defer uniques.deinit();
 				while (index > 0){
 					const tree = apply_rule(mem, &uniques, &binds.items[hoist.bind].hoist_token.?, new.items, index-1, 0) catch {
@@ -2169,15 +2173,20 @@ pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *
 							new.append(relay)
 								catch unreachable;
 						}
+						found = true;
 						break;
 					}
 					unreachable;
 				}
+				if (found){
+					_ = hoist_data.orderedRemove(hoist_index);
+				}
+			}
+			if (hoist_data.items.len == 0){
+				token.hoist_data = null;
 			}
 		}
-		var copy = token.*;
-		copy.hoist_data = null;
-		new.append(copy)
+		new.append(token.*)
 			catch unreachable;
 	}
 	return hoisted;
