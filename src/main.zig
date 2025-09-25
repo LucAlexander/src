@@ -152,7 +152,8 @@ const ParseError = error {
 	AlternateUnmatchable,
 	ConstMatched,
 	BrokenComptime,
-	NoHoist
+	NoHoist,
+	NoArgs
 };
 
 const TOKEN = enum {
@@ -268,30 +269,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	var i: u64 = 0;
 	var token_map = std.StringHashMap(TOKEN).init(mem.*);
 	token_map.put("bind", .BIND) catch unreachable;
-	token_map.put("comp", .COMP_START) catch unreachable;
-	token_map.put("run", .COMP_END) catch unreachable;
 	token_map.put("...", .ELIPSES) catch unreachable;
-	token_map.put("mov", .MOV) catch unreachable;
-	token_map.put("add", .ADD) catch unreachable;
-	token_map.put("sub", .SUB) catch unreachable;
-	token_map.put("mul", .MUL) catch unreachable;
-	token_map.put("div", .DIV) catch unreachable;
-	token_map.put("cmp", .CMP) catch unreachable;
-	token_map.put("jmp", .JMP) catch unreachable;
-	token_map.put("jlt", .JLT) catch unreachable;
-	token_map.put("jgt", .JGT) catch unreachable;
-	token_map.put("jle", .JLE) catch unreachable;
-	token_map.put("jge", .JGE) catch unreachable;
-	token_map.put("jz", .JZ) catch unreachable;
-	token_map.put("jnz", .JNZ) catch unreachable;
-	token_map.put("jeq", .JEQ) catch unreachable;
-	token_map.put("jne", .JNE) catch unreachable;
-	token_map.put("int", .INT) catch unreachable;
-	token_map.put("ip", .IP) catch unreachable;
-	token_map.put("r0", .R0) catch unreachable;
-	token_map.put("r1", .R1) catch unreachable;
-	token_map.put("r2", .R2) catch unreachable;
-	token_map.put("r3", .R3) catch unreachable;
 	var tokens = Buffer(Token).init(mem.*);
 	while (i<text.len){
 		var escape = false;
@@ -366,6 +344,42 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	return tokens;
 }
 
+pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) ParseError!void {
+	var token_map = std.StringHashMap(TOKEN).init(mem.*);
+	token_map.put("comp", .COMP_START) catch unreachable;
+	token_map.put("run", .COMP_END) catch unreachable;
+	token_map.put("mov", .MOV) catch unreachable;
+	token_map.put("add", .ADD) catch unreachable;
+	token_map.put("sub", .SUB) catch unreachable;
+	token_map.put("mul", .MUL) catch unreachable;
+	token_map.put("div", .DIV) catch unreachable;
+	token_map.put("cmp", .CMP) catch unreachable;
+	token_map.put("jmp", .JMP) catch unreachable;
+	token_map.put("jlt", .JLT) catch unreachable;
+	token_map.put("jgt", .JGT) catch unreachable;
+	token_map.put("jle", .JLE) catch unreachable;
+	token_map.put("jge", .JGE) catch unreachable;
+	token_map.put("jz", .JZ) catch unreachable;
+	token_map.put("jnz", .JNZ) catch unreachable;
+	token_map.put("jeq", .JEQ) catch unreachable;
+	token_map.put("jne", .JNE) catch unreachable;
+	token_map.put("int", .INT) catch unreachable;
+	token_map.put("ip", .IP) catch unreachable;
+	token_map.put("r0", .R0) catch unreachable;
+	token_map.put("r1", .R1) catch unreachable;
+	token_map.put("r2", .R2) catch unreachable;
+	token_map.put("r3", .R3) catch unreachable;
+	for (tokens.items) |*token| {
+		if (token_map.get(token.text)) |tag| {
+			token.tag = tag;
+		}
+		if (token.hoist_data) |_| {
+			std.debug.print("Left over hoist at {s} never found anchor\n", .{token.text});
+			return ParseError.NoHoist;
+		}
+	}
+}
+
 pub fn show_tokens(tokens: Buffer(Token)) void {
 	if (!debug){
 		return;
@@ -393,7 +407,13 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), progra
 			done = false;
 			program.binds.append(bind)
 				catch unreachable;
-			continue;
+			while (token_index.* < tokens.items.len){
+				const copy = tokens.items[token_index.*];
+				program.text.append(copy)
+					catch unreachable;
+				token_index.* += 1;
+			}
+			return done;
 		}
 		program.text.append(token.*)
 			catch unreachable;
@@ -429,6 +449,10 @@ pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *
 		}
 		bind.args.append(try parse_arg(mem, tokens, token_index))
 			catch unreachable;
+	}
+	if (bind.args.items.len == 0){
+		std.debug.print("No args provided to bind\n", .{});
+		return ParseError.NoArgs;
 	}
 	try skip_whitespace(tokens, token_index);
 	const eq = tokens[token_index.*];
@@ -515,6 +539,7 @@ pub fn skip_whitespace(tokens: []Token, token_index: *u64) ParseError!void {
 		return;
 	}
 	token_index.*-=1;
+	std.debug.print("Encountered end of file in whitespace skip\n", .{});
 	return ParseError.UnexpectedEOF;
 }
 
@@ -655,12 +680,10 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 				try skip_whitespace(tokens, token_index);
 				if (tokens[token_index.*].tag == .ALTERNATE){
 					token_index.* += 1;
-					try skip_whitespace(tokens, token_index);
 					break;
 				}
 				if (tokens[token_index.*].tag == .CLOSE_BRACK){
 					token_index.* += 1;
-					try skip_whitespace(tokens, token_index);
 					pattern.alternate.append(list)
 						catch unreachable;
 					break :blk;
@@ -1749,6 +1772,7 @@ const Instruction = union(enum) {
 };
 
 pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!Buffer(Instruction) {
+	try retokenize(mem, tokens);
 	var ops = Buffer(Instruction).init(mem.*);
 	var labels = std.StringHashMap(u64).init(mem.*);
 	const index_save = token_index.*;
@@ -2123,7 +2147,6 @@ pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *
 				var index = new.items.len;
 				var uniques = std.StringHashMap([]u8).init(mem.*);
 				defer uniques.deinit();
-				var found_position = false;
 				while (index > 0){
 					const tree = apply_rule(mem, &uniques, &binds.items[hoist.bind].hoist_token.?, new.items, index-1, 0) catch {
 						index -= 1;
@@ -2146,14 +2169,9 @@ pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *
 							new.append(relay)
 								catch unreachable;
 						}
-						found_position = true;
 						break;
 					}
 					unreachable;
-				}
-				if (found_position == false){
-					std.debug.print("Failed to find hoist position for hoist data at token: {s}\n", .{token.text});
-					return ParseError.NoHoist;
 				}
 			}
 		}
@@ -2451,4 +2469,5 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 
-//TODO allow instructions to be treated as identifiers until parse happens
+//TODO think about removing precedence in favor of pure file order
+//TODO concat only works on completed tokens, not arguments
