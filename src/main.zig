@@ -72,47 +72,64 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 	var token_stream = tokens;
 	var token_index: u64 = 0;
 	program.text=&text;
-	var redo = true;
-	while (redo){
-		var done = false;
-		while (!done){
-			program.text.clearRetainingCapacity();
-			token_index = 0;
-			done = parse(mem, token_stream, &program, &token_index) catch |err| {
-				std.debug.print("Parse Error {}\n", .{err});
-				report_error(token_stream, token_index);
+	var concatenated = true;
+	while (concatenated){
+		var redo = true;
+		while (redo){
+			var done = false;
+			while (!done){
+				program.text.clearRetainingCapacity();
+				token_index = 0;
+				done = parse(mem, token_stream, &program, &token_index) catch |err| {
+					std.debug.print("Parse Error {}\n", .{err});
+					report_error(token_stream, token_index);
+					return null;
+				};
+				show_program(program);
+				if (debug){
+					std.debug.print("parsed--------------------------\n", .{});
+				}
+				if (program.text == &text){
+					token_stream = apply_binds(mem, &text, &auxil, &program, &done) catch |err| {
+						std.debug.print("Parse Error {}\n", .{err});
+						return null;
+					};
+				}
+				else {
+					token_stream = apply_binds(mem, &auxil, &text, &program, &done) catch |err| {
+						std.debug.print("Parse Error {}\n", .{err});
+						return null;
+					};
+				}
+				show_tokens(token_stream.*);
+				if (debug){
+					std.debug.print("applied binds-------------------\n", .{});
+				}
+			}
+			redo = fill_hoist(mem, program.text, token_stream, program.binds) catch |err| {
+				std.debug.print("Hoist Error {}\n", .{err});
 				return null;
 			};
-			show_program(program);
+			show_tokens(program.text.*);
 			if (debug){
-				std.debug.print("parsed--------------------------\n", .{});
+				std.debug.print("hoisted--------------------------\n", .{});
 			}
-			std.debug.print("here\n", .{});
-			if (program.text == &text){
-				token_stream = apply_binds(mem, &text, &auxil, &program, &done) catch |err| {
-					std.debug.print("Parse Error {}\n", .{err});
-					return null;
-				};
+			if (program.text == &auxil){
+				program.text = &text;
+				token_stream = &auxil;
 			}
-			else {
-				token_stream = apply_binds(mem, &auxil, &text, &program, &done) catch |err| {
-					std.debug.print("Parse Error {}\n", .{err});
-					return null;
-				};
+			else{
+				program.text = &auxil;
+				token_stream = &text;
 			}
-			show_tokens(token_stream.*);
-			if (debug){
-				std.debug.print("applied binds-------------------\n", .{});
+			if (redo == false){
+				break;
 			}
 		}
-		redo = fill_hoist(mem, program.text, token_stream, program.binds) catch |err| {
-			std.debug.print("Hoist Error {}\n", .{err});
+		concatenated = concat_pass(mem, program.text, token_stream) catch |err| {
+			std.debug.print("Error while concatenating {}\n", .{err});
 			return null;
 		};
-		show_tokens(program.text.*);
-		if (debug){
-			std.debug.print("hoisted--------------------------\n", .{});
-		}
 		if (program.text == &auxil){
 			program.text = &text;
 			token_stream = &auxil;
@@ -121,9 +138,10 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 			program.text = &auxil;
 			token_stream = &text;
 		}
-		if (redo == false){
+		if (concatenated == false){
 			break;
 		}
+
 	}
 	if (run){
 		var index:u64 = 0;
@@ -1247,26 +1265,6 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 				nest_depth += 1;
 			}
 		}
-		if (token.tag == .CONCAT){
-			const left = new.items[new.items.len-1].text;
-			if (index+1 < current_bind.text.items.len){
-				const right = current_bind.text.items[index+1].text;
-				const concat = mem.alloc(u8, left.len+right.len)
-					catch unreachable;
-				var i:u64 = 0;
-				while (i < left.len){
-					concat[i] = left[i];
-					i += 1;
-				}
-				while ((i-left.len) < right.len){
-					concat[i] = right[i-left.len];
-					i += 1;
-				}
-				new.items[new.items.len-1] = Token{.tag=.IDENTIFIER, .text=concat, .hoist_data=null};
-				index += 1;
-				continue :outer;
-			}
-		}
 		if (current.uniques.get(token.text)) |id| {
 			if (first){
 				first = false;
@@ -1458,6 +1456,44 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 	return index;
 }
 
+pub fn concat_pass(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *const Buffer(Token)) ParseError!bool {
+	var new = aux;
+	new.clearRetainingCapacity();
+	var concatenated = false;
+	var index: u64 = 0;
+	while (index < program.items.len-2) {
+		const concat = program.items[index+1];
+		if (concat.tag != .CONCAT){
+			new.append(program.items[index])
+				catch unreachable;
+			index += 1;
+			continue;
+		}
+		concatenated = true;
+		const left = program.items[index];
+		const right = program.items[index+2];
+		const together = mem.alloc(u8, left.text.len+right.text.len)
+			catch unreachable;
+		var i:u64 = 0;
+		while (i<left.text.len){
+			together[i] = left.text[i];
+			i += 1;
+		}
+		while ((i-left.text.len)<right.text.len) {
+			together[i] = right.text[i-left.text.len];
+			i += 1;
+		}
+		new.append(Token{.tag=.IDENTIFIER,.text=together, .hoist_data=null})
+			catch unreachable;
+		index += 3;
+	}
+	while (index < program.items.len) : (index += 1){
+		new.append(program.items[index])
+			catch unreachable;
+	}
+	return concatenated;
+}
+
 pub fn move_data(run: *Buffer(Token), comp: *const Buffer(Token), mem: *const std.mem.Allocator) ParseError!void {
 	var token_index: u64 = 0;
 	while (token_index < comp.items.len){
@@ -1529,26 +1565,6 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 			}
 			if (token.tag == .OPEN_BRACE){
 				nest_depth += 1;
-			}
-		}
-		if (token.tag == .CONCAT){
-			const left = new.items[new.items.len-1].text;
-			if (index+1 < current_bind.hoist.items.len){
-				const right = current_bind.hoist.items[index+1].text;
-				const concat = mem.alloc(u8, left.len+right.len)
-					catch unreachable;
-				var i:u64 = 0;
-				while (i < left.len){
-					concat[i] = left[i];
-					i += 1;
-				}
-				while ((i-left.len) < right.len){
-					concat[i] = right[i-left.len];
-					i += 1;
-				}
-				new.items[new.items.len-1] = Token{.tag=.IDENTIFIER, .text=concat, .hoist_data=null};
-				index += 1;
-				continue :outer;
 			}
 		}
 		if (current.uniques.get(token.text)) |id| {
