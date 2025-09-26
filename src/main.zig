@@ -13,9 +13,11 @@ var comp_persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
 var comp_section = false;
 
 const mem_size = 0x1000;
+const frame_buffer = 800*600;
+const register_section = 8*5;
 
 const VM = struct {
-	mem: [mem_size+8*5]u8,
+	mem: [mem_size+frame_buffer+register_section]u8,
 	r0: u64,
 	r1: u64,
 	r2: u64,
@@ -2461,5 +2463,3 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 
-//TODO think about removing precedence in favor of pure file order
-//TODO concat only works on completed tokens, not arguments
