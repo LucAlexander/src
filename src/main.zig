@@ -87,6 +87,7 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 			if (debug){
 				std.debug.print("parsed--------------------------\n", .{});
 			}
+			std.debug.print("here\n", .{});
 			if (program.text == &text){
 				token_stream = apply_binds(mem, &text, &auxil, &program, &done) catch |err| {
 					std.debug.print("Parse Error {}\n", .{err});
@@ -1071,6 +1072,32 @@ pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precede
 	return buffer;
 }
 
+pub fn aggregate_hoists(mem: *const std.mem.Allocator, input_index: u64, token_index: u64, program:*ProgramText, new: *Buffer(Token)) void {
+	var save_index = input_index;
+	while (save_index < token_index){
+		const candidate = program.text.items[save_index];
+		if (candidate.hoist_data) |candidate_hoist| {
+			const new_token = &new.items[new.items.len-1];
+			if (new_token.hoist_data) |_| {
+				for (candidate_hoist.items) |c| {
+					new_token.hoist_data.?.append(c)
+						catch unreachable;
+				}
+			}
+			else {
+				var hd = Buffer(AppliedBind).init(mem.*);
+				for (candidate_hoist.items) |c| {
+					hd.append(c)
+						catch unreachable;
+				}
+				new_token.hoist_data = hd;
+			}
+		}
+		save_index += 1;
+	}
+
+}
+
 pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buffer(Token), program: *ProgramText, done: *bool) ParseError!*Buffer(Token) {
 	var precedence: u64 = blk: {
 		var max: u64 = '0';
@@ -1105,31 +1132,11 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 					catch unreachable;
 				token_index += 1;
 			}
-			var save_index = token_index;
+			const save_index = token_index;
 			token_index = current.end_index;
 			var stack = Buffer(*ArgTree).init(mem.*);
 			_ = try rewrite(mem, program.binds, current, new, 0, false, false, &stack);
-			while (save_index < token_index){
-				const candidate = program.text.items[save_index];
-				if (candidate.hoist_data) |candidate_hoist| {
-					const new_token = &new.items[new.items.len-1];
-					if (new_token.hoist_data) |_| {
-						for (candidate_hoist.items) |c| {
-							new_token.hoist_data.?.append(c)
-								catch unreachable;
-						}
-					}
-					else {
-						var hd = Buffer(AppliedBind).init(mem.*);
-						for (candidate_hoist.items) |c| {
-							hd.append(c)
-								catch unreachable;
-						}
-						new_token.hoist_data = hd;
-					}
-				}
-				save_index += 1;
-			}
+			aggregate_hoists(mem, save_index, token_index, program, new);
 		}
 		else{
 			while (i < blocks.items.len-1){
@@ -1140,7 +1147,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 						catch unreachable;
 					token_index += 1;
 				}
-				var save_index = token_index;
+				const save_index = token_index;
 				token_index = current.end_index;
 				var adjust = false;
 				if (current.end_index > next.start_index and current.end_index < next.end_index){
@@ -1148,27 +1155,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 				}
 				var stack = Buffer(*ArgTree).init(mem.*);
 				_ = try rewrite(mem, program.binds, current, new, 0, false, false, &stack);
-				while (save_index < token_index){
-					const candidate = program.text.items[save_index];
-					if (candidate.hoist_data) |candidate_hoist| {
-						const new_token = &new.items[new.items.len-1];
-						if (new_token.hoist_data) |_| {
-							for (candidate_hoist.items) |c| {
-								new_token.hoist_data.?.append(c)
-									catch unreachable;
-							}
-						}
-						else {
-							var hd = Buffer(AppliedBind).init(mem.*);
-							for (candidate_hoist.items) |c| {
-								hd.append(c)
-									catch unreachable;
-							}
-							new_token.hoist_data = hd;
-						}
-					}
-					save_index += 1;
-				}
+				aggregate_hoists(mem, save_index, token_index, program, new);
 				if (adjust == true){
 					reparse = true;
 					while (token_index < program.text.items.len){
@@ -1187,31 +1174,11 @@ pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buf
 						catch unreachable;
 					token_index += 1;
 				}
-				var save_index = token_index;
+				const save_index = token_index;
 				token_index = current.end_index;
 				var stack = Buffer(*ArgTree).init(mem.*);
 				_ = try rewrite(mem, program.binds, current, new, 0, false, false, &stack);
-				while (save_index < token_index){
-					const candidate = program.text.items[save_index];
-					if (candidate.hoist_data) |candidate_hoist| {
-						const new_token = &new.items[new.items.len-1];
-						if (new_token.hoist_data) |_| {
-							for (candidate_hoist.items) |c| {
-								new_token.hoist_data.?.append(c)
-									catch unreachable;
-							}
-						}
-						else {
-							var hd = Buffer(AppliedBind).init(mem.*);
-							for (candidate_hoist.items) |c| {
-								hd.append(c)
-									catch unreachable;
-							}
-							new_token.hoist_data = hd;
-						}
-					}
-					save_index += 1;
-				}
+				aggregate_hoists(mem, save_index, token_index, program, new);
 			}
 		}
 		while (token_index < program.text.items.len){
