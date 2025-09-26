@@ -1,4 +1,5 @@
 const std = @import("std");
+const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
 const debug = true;
@@ -12,9 +13,14 @@ var persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
 var comp_persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
 var comp_section = false;
 
+const frame_buffer_w = 640;
+const pixel_width = 4;
+const word_size = 8;
+const frame_buffer_h = 360;
+
 const mem_size = 0x1000;
-const frame_buffer = 800*600;
-const register_section = 8*5;
+const frame_buffer = frame_buffer_w*frame_buffer_h*pixel_width;
+const register_section = word_size*5;
 
 const VM = struct {
 	mem: [mem_size+frame_buffer+register_section]u8,
@@ -38,6 +44,15 @@ const VM = struct {
 
 var vm: VM = VM.init();
 
+var frame_buffer_image = rl.Image{
+	.data=&vm.mem[mem_size],
+	.width=frame_buffer_w,
+	.height=frame_buffer_h,
+	.mipmaps=1,
+	.format=rl.PixelFormat.uncompressed_r8g8b8a8
+};
+var frame_buffer_texture:rl.Texture = undefined;
+
 pub fn main() !void {
 	const allocator = std.heap.page_allocator;
 	var infile = try std.fs.cwd().openFile("simple.src", .{});
@@ -54,6 +69,8 @@ pub fn main() !void {
 		std.debug.print("initial------------------------------\n", .{});
 	}
 	var binds = Buffer(Bind).init(mem);
+	rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
+	frame_buffer_texture = try rl.loadTextureFromImage(frame_buffer_image);
 	_ = metaprogram(&tokens, &binds, &mem, true);
 }
 
@@ -2381,11 +2398,10 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 				//TODO propper interrupts
 				ip += 1;
 				if (vm.mem[vm.r0] == 0){
-					const pos = vm.mem[vm.r1];
-					const len = vm.mem[vm.r2];
-					for (0..len) |i| {
-						std.debug.print("{}", .{vm.mem[pos+i]});
-					}
+					rl.updateTexture(frame_buffer_texture, &vm.mem[mem_size]);
+					rl.beginDrawing();
+					rl.drawTexture(frame_buffer_texture, 0, 0, .white);
+					rl.endDrawing();
 				}
 			}
 		}
