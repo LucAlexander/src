@@ -2,7 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
-const debug = true;
+const debug = false;
 
 const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -20,10 +20,11 @@ const frame_buffer_h = 360;
 
 const mem_size = 0x1000;
 const frame_buffer = frame_buffer_w*frame_buffer_h*pixel_width;
+const main_size = mem_size+frame_buffer;
 const register_section = word_size*5;
 
 const VM = struct {
-	mem: [mem_size+frame_buffer+register_section]u8,
+	mem: [frame_buffer+mem_size+register_section]u8,
 	r0: u64,
 	r1: u64,
 	r2: u64,
@@ -33,11 +34,11 @@ const VM = struct {
 	pub fn init() VM {
 		return VM{
 			.mem=undefined,
-			.r0=mem_size,
-			.r1=mem_size+1*8,
-			.r2=mem_size+2*8,
-			.r3=mem_size+3*8,
-			.sr=mem_size+4*8
+			.r0=main_size,
+			.r1=main_size+1*8,
+			.r2=main_size+2*8,
+			.r3=main_size+3*8,
+			.sr=main_size+4*8
 		};
 	}
 };
@@ -45,7 +46,7 @@ const VM = struct {
 var vm: VM = VM.init();
 
 var frame_buffer_image = rl.Image{
-	.data=&vm.mem[mem_size],
+	.data=&vm.mem[0],
 	.width=frame_buffer_w,
 	.height=frame_buffer_h,
 	.mipmaps=1,
@@ -55,7 +56,7 @@ var frame_buffer_texture:rl.Texture = undefined;
 
 pub fn main() !void {
 	const allocator = std.heap.page_allocator;
-	var infile = try std.fs.cwd().openFile("simple.src", .{});
+	var infile = try std.fs.cwd().openFile("red.src", .{});
 	defer infile.close();
 	const stat = try infile.stat();
 	const contents = try infile.readToEndAlloc(allocator, stat.size+1);
@@ -1778,12 +1779,12 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 	var ops = Buffer(Instruction).init(mem.*);
 	var labels = std.StringHashMap(u64).init(mem.*);
 	const index_save = token_index.*;
-	for (0..2) |_| {
+	outer: for (0..2) |_| {
 		token_index.* = index_save;
 		ops.clearRetainingCapacity();
 		while (token_index.* < tokens.items.len){
 			skip_whitespace(tokens.items, token_index) catch {
-				return ops;
+				continue :outer;
 			};
 			if (token_index.* > tokens.items.len){
 				std.debug.print("Expected opcode, found end of file\n", .{});
@@ -2286,12 +2287,14 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 					std.debug.print("left: {}, right: {}\n", .{left, right});
 				}
 				if (left > right) {
-					vm.mem[vm.sr] = 1;
+					store_u64(vm.sr, 1);
 				}
 				else if (left < right) {
-					vm.mem[vm.sr] = 2;
+					store_u64(vm.sr, 2);
 				}
-				vm.mem[vm.sr] = 0;
+				else{
+					store_u64(vm.sr, 0);
+				}
 				ip += 1;
 			},
 			.alu => {
@@ -2398,7 +2401,7 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 				//TODO propper interrupts
 				ip += 1;
 				if (vm.mem[vm.r0] == 0){
-					rl.updateTexture(frame_buffer_texture, &vm.mem[mem_size]);
+					rl.updateTexture(frame_buffer_texture, &vm.mem[0]);
 					rl.beginDrawing();
 					rl.drawTexture(frame_buffer_texture, 0, 0, .white);
 					rl.endDrawing();
