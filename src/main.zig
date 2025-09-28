@@ -13,10 +13,10 @@ var persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
 var comp_persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
 var comp_section = false;
 
-const frame_buffer_w = 640;
+const frame_buffer_w = 320;
 const pixel_width = 4;
 const word_size = 8;
-const frame_buffer_h = 360;
+const frame_buffer_h = 180;
 
 const frame_buffer = frame_buffer_w*frame_buffer_h*pixel_width;
 const mem_size = 0x100000;
@@ -56,6 +56,10 @@ var frame_buffer_image = rl.Image{
 var frame_buffer_texture:rl.Texture = undefined;
 
 pub fn main() !void {
+	persistent.put("mbm", frame_buffer) catch unreachable;
+	persistent.put("fbw", frame_buffer_w) catch unreachable;
+	persistent.put("fbh", frame_buffer_h) catch unreachable;
+	persistent.put("mtp", frame_buffer+mem_size-1) catch unreachable;
 	const allocator = std.heap.page_allocator;
 	var infile = try std.fs.cwd().openFile("red.src", .{});
 	defer infile.close();
@@ -2501,25 +2505,36 @@ pub fn interpret(start:u64) RuntimeError!void {
 	while (running) {
 		if (debug){
 			std.debug.print("{}: {x:02} ...\n", .{ip, vm.mem[ip]});
+			std.debug.print("r0: {}\n", .{load_u64(vm.r0)});
+			std.debug.print("r1: {}\n", .{load_u64(vm.r1)});
+			std.debug.print("r2: {}\n", .{load_u64(vm.r2)});
+			std.debug.print("r3: {}\n", .{load_u64(vm.r3)});
+			std.debug.print("sr: {}\n", .{load_u64(vm.sr)});
+			var stdin = std.io.getStdIn().reader();
+			var buffer: [1]u8 = undefined;
+			_ = stdin.read(&buffer) catch unreachable;
 		}
 		running = try ops[vm.mem[ip]](&ip);
 	}
 }
 
 pub fn mov_ii_bytes(ip: *u64) RuntimeError!bool{
-	store_u64(load_u64(load_u64(ip.*+1)), load_u64(load_u64(ip.*+9)));
+	store_u64(load_u64(ip.*+1), load_u64(load_u64(ip.*+9)));
 	ip.* += 17;
 	return true;
 }
 
 pub fn mov_il_bytes(ip: *u64) RuntimeError!bool {
-	store_u64(load_u64(load_u64(ip.*+1)), load_u64(ip.*+9));
+	if (debug){
+		std.debug.print("loading from {}\n", .{load_u64(ip.*+1)});
+	}
+	store_u64(load_u64(ip.*+1), load_u64(ip.*+9));
 	ip.* += 17;
 	return true;
 }
 
 pub fn mov_id_bytes(ip: *u64) RuntimeError!bool {
-	store_u64(load_u64(load_u64(ip.*+1)), load_u64(load_u64(load_u64(ip.*+9))));
+	store_u64(load_u64(ip.*+1), load_u64(load_u64(load_u64(ip.*+9))));
 	ip.* += 17;
 	return true;
 }
@@ -2543,26 +2558,26 @@ pub fn mov_ld_bytes(ip: *u64) RuntimeError!bool {
 }
 
 pub fn mov_di_bytes(ip: *u64) RuntimeError!bool {
-	store_u64(load_u64(load_u64(load_u64(ip.*+1))), load_u64(load_u64(ip.*+9)));
+	store_u64(load_u64(load_u64(ip.*+1)), load_u64(load_u64(ip.*+9)));
 	ip.* += 17;
 	return true;
 }
 
 pub fn mov_dl_bytes(ip: *u64) RuntimeError!bool {
-	store_u64(load_u64(load_u64(load_u64(ip.*+1))), load_u64(ip.*+9));
+	store_u64(load_u64(load_u64(ip.*+1)), load_u64(ip.*+9));
 	ip.* += 17;
 	return true;
 }
 
 pub fn mov_dd_bytes(ip: *u64) RuntimeError!bool {
-	store_u64(load_u64(load_u64(load_u64(ip.*+1))), load_u64(load_u64(load_u64(ip.*+9))));
+	store_u64(load_u64(load_u64(ip.*+1)), load_u64(load_u64(load_u64(ip.*+9))));
 	ip.* += 17;
 	return true;
 }
 
 pub fn add_iii_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) +
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2571,7 +2586,7 @@ pub fn add_iii_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_iil_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) +
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2580,7 +2595,7 @@ pub fn add_iil_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_iid_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) +
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2589,7 +2604,7 @@ pub fn add_iid_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_ili_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) +
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2598,7 +2613,7 @@ pub fn add_ili_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_ill_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) +
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2607,7 +2622,7 @@ pub fn add_ill_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_ild_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) +
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2616,7 +2631,7 @@ pub fn add_ild_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_idi_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) +
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2625,7 +2640,7 @@ pub fn add_idi_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_idl_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) +
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2634,7 +2649,7 @@ pub fn add_idl_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_idd_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) +
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2724,7 +2739,7 @@ pub fn add_ldd_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_dii_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) +
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2733,7 +2748,7 @@ pub fn add_dii_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_dil_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) +
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2742,7 +2757,7 @@ pub fn add_dil_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_did_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) +
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2751,7 +2766,7 @@ pub fn add_did_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_dli_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) +
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2760,7 +2775,7 @@ pub fn add_dli_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_dll_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) +
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2769,7 +2784,7 @@ pub fn add_dll_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_dld_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) +
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2778,7 +2793,7 @@ pub fn add_dld_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_ddi_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) +
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2787,7 +2802,7 @@ pub fn add_ddi_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_ddl_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) +
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2796,7 +2811,7 @@ pub fn add_ddl_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn add_ddd_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) +
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2805,7 +2820,7 @@ pub fn add_ddd_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_iii_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) -
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2814,7 +2829,7 @@ pub fn sub_iii_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_iil_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) -
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2823,7 +2838,7 @@ pub fn sub_iil_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_iid_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) -
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2832,7 +2847,7 @@ pub fn sub_iid_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_ili_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) -
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2841,7 +2856,7 @@ pub fn sub_ili_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_ill_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) -
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2850,7 +2865,7 @@ pub fn sub_ill_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_ild_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) -
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2859,7 +2874,7 @@ pub fn sub_ild_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_idi_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) -
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2868,7 +2883,7 @@ pub fn sub_idi_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_idl_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) -
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2877,7 +2892,7 @@ pub fn sub_idl_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_idd_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) -
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2967,7 +2982,7 @@ pub fn sub_ldd_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_dii_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) -
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -2976,7 +2991,7 @@ pub fn sub_dii_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_dil_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) -
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -2985,7 +3000,7 @@ pub fn sub_dil_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_did_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) -
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -2994,7 +3009,7 @@ pub fn sub_did_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_dli_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) -
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3003,7 +3018,7 @@ pub fn sub_dli_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_dll_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) -
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3012,7 +3027,7 @@ pub fn sub_dll_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_dld_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) -
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3021,7 +3036,7 @@ pub fn sub_dld_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_ddi_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) -
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3030,7 +3045,7 @@ pub fn sub_ddi_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_ddl_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) -
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3039,7 +3054,7 @@ pub fn sub_ddl_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn sub_ddd_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) -
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3048,7 +3063,7 @@ pub fn sub_ddd_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_iii_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) *
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3057,7 +3072,7 @@ pub fn mul_iii_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_iil_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) *
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3066,7 +3081,7 @@ pub fn mul_iil_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_iid_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) *
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3075,7 +3090,7 @@ pub fn mul_iid_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_ili_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) *
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3084,7 +3099,7 @@ pub fn mul_ili_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_ill_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) *
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3093,7 +3108,7 @@ pub fn mul_ill_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_ild_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) *
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3102,7 +3117,7 @@ pub fn mul_ild_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_idi_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) *
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3111,7 +3126,7 @@ pub fn mul_idi_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_idl_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) *
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3120,7 +3135,7 @@ pub fn mul_idl_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_idd_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) *
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3210,7 +3225,7 @@ pub fn mul_ldd_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_dii_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) *
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3219,7 +3234,7 @@ pub fn mul_dii_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_dil_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) *
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3228,7 +3243,7 @@ pub fn mul_dil_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_did_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) *
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3237,7 +3252,7 @@ pub fn mul_did_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_dli_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) *
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3246,7 +3261,7 @@ pub fn mul_dli_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_dll_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) *
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3255,7 +3270,7 @@ pub fn mul_dll_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_dld_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) *
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3264,7 +3279,7 @@ pub fn mul_dld_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_ddi_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) *
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3273,7 +3288,7 @@ pub fn mul_ddi_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_ddl_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) *
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3282,7 +3297,7 @@ pub fn mul_ddl_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn mul_ddd_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) *
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3291,7 +3306,7 @@ pub fn mul_ddd_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_iii_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) /
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3300,7 +3315,7 @@ pub fn div_iii_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_iil_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) /
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3309,7 +3324,7 @@ pub fn div_iil_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_iid_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(ip.*+9)) /
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3318,7 +3333,7 @@ pub fn div_iid_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_ili_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) /
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3327,7 +3342,7 @@ pub fn div_ili_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_ill_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) /
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3336,7 +3351,7 @@ pub fn div_ill_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_ild_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(ip.*+9) /
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3345,7 +3360,7 @@ pub fn div_ild_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_idi_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) /
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3354,7 +3369,7 @@ pub fn div_idi_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_idl_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) /
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3363,7 +3378,7 @@ pub fn div_idl_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_idd_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+1),
 		load_u64(load_u64(load_u64(ip.*+9))) /
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3453,7 +3468,7 @@ pub fn div_ldd_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_dii_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) /
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3462,7 +3477,7 @@ pub fn div_dii_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_dil_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) /
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3471,7 +3486,7 @@ pub fn div_dil_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_did_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(ip.*+9)) /
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3480,7 +3495,7 @@ pub fn div_did_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_dli_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) /
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3489,7 +3504,7 @@ pub fn div_dli_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_dll_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) /
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3498,7 +3513,7 @@ pub fn div_dll_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_dld_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(ip.*+9) /
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
@@ -3507,7 +3522,7 @@ pub fn div_dld_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_ddi_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) /
 		load_u64(load_u64(ip.*+17)));
 	ip.* += 25;
@@ -3516,7 +3531,7 @@ pub fn div_ddi_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_ddl_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) /
 		load_u64(ip.*+17));
 	ip.* += 25;
@@ -3525,7 +3540,7 @@ pub fn div_ddl_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn div_ddd_bytes(ip: *u64) RuntimeError!bool {
 	store_u64(
-		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+1)),
 		load_u64(load_u64(load_u64(ip.*+9))) /
 		load_u64(load_u64(load_u64(ip.*+17))));
 	ip.* += 25;
