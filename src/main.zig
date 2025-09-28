@@ -2,7 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
-const debug = false;
+const debug = true;
 
 const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -18,10 +18,11 @@ const pixel_width = 4;
 const word_size = 8;
 const frame_buffer_h = 360;
 
-const mem_size = 0x1000;
 const frame_buffer = frame_buffer_w*frame_buffer_h*pixel_width;
+const mem_size = 0x100000;
 const main_size = mem_size+frame_buffer;
 const register_section = word_size*5;
+const start_ip = frame_buffer;
 
 const VM = struct {
 	mem: [frame_buffer+mem_size+register_section]u8,
@@ -165,16 +166,20 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 	}
 	if (run){
 		var index:u64 = 0;
-		const instructions = parse_bytecode(mem, token_stream, &index, false) catch |err| {
+		const program_len = parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], token_stream, &index, false) catch |err| {
 			std.debug.print("Bytecode Parse Error {}\n", .{err});
 			return null;
 		};
-		show_instructions(instructions);
 		if (debug){
+			std.debug.print("program length: {}\n", .{program_len});
+			for (vm.mem[frame_buffer .. frame_buffer+program_len]) |byte| {
+				std.debug.print("{x:02} ", .{byte});
+			}
+			std.debug.print("\n", .{});
 			std.debug.print("parsed bytecode--------------------\n", .{});
 		}
 		vm = VM.init();
-		interpret(instructions) catch |err| {
+		interpret(start_ip) catch |err| {
 			std.debug.print("Runtime Error {}\n", .{err});
 			return null;
 		};
@@ -1752,36 +1757,37 @@ const Location = union(enum) {
 	dereference: *Location
 };
 
-const Instruction = union(enum) {
-	move: struct {
-		dest: Location,
-		src: Location
+const Instruction = struct {
+	data: union(enum) {
+		move: struct {
+			dest: Location,
+			src: Location
+		},
+		compare: struct {
+			left: Location,
+			right: Location
+		},
+		alu: struct {
+			dest: Location,
+			left: Location,
+			right: Location
+		},
+		jump: struct {
+			dest: Location
+		},
+		interrupt,
 	},
-	compare: struct {
-		left: Location,
-		right: Location
-	},
-	alu: struct {
-		tag: TOKEN,
-		dest: Location,
-		left: Location,
-		right: Location
-	},
-	jump: struct {
-		tag: TOKEN,
-		dest: Location
-	},
-	interrupt,
+	tag: Opcode
 };
 
-pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!Buffer(Instruction) {
+pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!u64 {
 	try retokenize(mem, tokens);
-	var ops = Buffer(Instruction).init(mem.*);
 	var labels = std.StringHashMap(u64).init(mem.*);
 	const index_save = token_index.*;
+	var i: u64 = 0;
 	outer: for (0..2) |_| {
+		i = 0;
 		token_index.* = index_save;
-		ops.clearRetainingCapacity();
 		while (token_index.* < tokens.items.len){
 			skip_whitespace(tokens.items, token_index) catch {
 				continue :outer;
@@ -1792,17 +1798,18 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 			}
 			const token = tokens.items[token_index.*];
 			token_index.* += 1;
+			var op: ?Instruction = null;
 			switch (token.tag){
 				.COMP_START => {
 					comp_section = true;
 					if (debug) {
 						std.debug.print("Entering comp segment\n", .{});
 					}
-					const comp_program = try parse_bytecode(mem, tokens, token_index, true);
+					_ = try parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], tokens, token_index, true);
 					if (debug) {
 						std.debug.print("Parsed comp segment\n", .{});
 					}
-					interpret(comp_program) catch |err| {
+					interpret(start_ip) catch |err| {
 						std.debug.print("Runtime Error {}\n", .{err});
 						return ParseError.BrokenComptime;
 					};
@@ -1810,20 +1817,21 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 						std.debug.print("Exiting comp segment\n", .{});
 					}
 					comp_section = false;
+					continue;
 				},
 				.COMP_END => {
 					if (comp == false){
 						continue;
 					}
-					return ops;
+					return i;
 				},
 				.BIND => {
 					skip_whitespace(tokens.items, token_index) catch {
-						return ops;
+						return i;
 					};
 					token_index.* += 1;
 					skip_whitespace(tokens.items, token_index) catch {
-						return ops;
+						return i;
 					};
 					const name = tokens.items[token_index.*];
 					token_index.* += 1;
@@ -1832,7 +1840,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 						return ParseError.UnexpectedToken;
 					}
 					skip_whitespace(tokens.items, token_index) catch {
-						return ops;
+						return i;
 					};
 					if (tokens.items[token_index.*].tag != .EQUAL){
 						std.debug.print("Expected = for transfer bind, found {s}\n", .{tokens.items[token_index.*].text});
@@ -1840,12 +1848,12 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 					}
 					token_index.* += 1;
 					skip_whitespace(tokens.items, token_index) catch {
-						return ops;
+						return i;
 					};
 					const is_ip = tokens.items[token_index.*];
 					if (is_ip.tag == .IP){
 						token_index.* += 1;
-						labels.put(name.text, ops.items.len)
+						labels.put(name.text, i+start_ip)
 							catch unreachable;
 						continue;
 					}
@@ -1866,67 +1874,241 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 						persistent.put(name.text, val)
 							catch unreachable;
 					}
+					continue;
 				},
 				.MOV => {
-					ops.append(
-						Instruction{
+					op = Instruction{
+						.tag=.mov_ii,
+						.data=.{
 							.move=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels),
-								.src=try parse_location_or_label(mem, tokens, token_index, labels)
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
 							}
 						}
-					) catch unreachable;
+					};
 				},
-				.ADD, .SUB, .MUL, .DIV => {
-					ops.append(
-						Instruction{
+				.ADD => {
+					op = Instruction{
+						.tag=.add_iii,
+						.data=.{
 							.alu=.{
-								.tag = token.tag,
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels)
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
 							}
 						}
-					) catch unreachable;
+					};
+				},
+				.SUB => {
+					op = Instruction{
+						.tag=.sub_iii,
+						.data=.{
+							.alu=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.MUL => {
+					op = Instruction{
+						.tag=.mul_iii,
+						.data=.{
+							.alu=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.DIV => {
+					op = Instruction{
+						.tag=.div_iii,
+						.data=.{
+							.alu=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
 				},
 				.CMP => {
-					ops.append(
-						Instruction{
+					op = Instruction{
+						.tag=.cmp_ii,
+						.data=.{
 							.compare=.{
-								.left=try parse_location_or_label(mem, tokens, token_index, labels),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels)
+								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
 							}
 						}
-					) catch unreachable;
+					};
 				},
-				.JMP, .JLT, .JGT, .JLE, .JGE, .JZ, .JNZ, .JEQ, .JNE => {
-					ops.append(
-						Instruction{
+				.JMP => {
+					op = Instruction{
+						.tag=.jmp_i,
+						.data=.{
 							.jump=.{
-								.tag=token.tag,
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels)
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
 							}
 						}
-					) catch unreachable;
+					};
+				},
+				.JNE => {
+					op = Instruction{
+						.tag=.jne_i,
+						.data=.{
+							.jump=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.JEQ => {
+					op = Instruction{
+						.tag=.jeq_i,
+						.data=.{
+							.jump=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.JNZ => {
+					op = Instruction{
+						.tag=.jnz_i,
+						.data=.{
+							.jump=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.JZ => {
+					op = Instruction{
+						.tag=.jz_i,
+						.data=.{
+							.jump=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.JLE => {
+					op = Instruction{
+						.tag=.jle_i,
+						.data=.{
+							.jump=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.JLT => {
+					op = Instruction{
+						.tag=.jlt_i,
+						.data=.{
+							.jump=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.JGE => {
+					op = Instruction{
+						.tag=.jge_i,
+						.data=.{
+							.jump=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.JGT => {
+					op = Instruction{
+						.tag=.jgt_i,
+						.data=.{
+							.jump=.{
+								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
 				},
 				.INT => {
-					ops.append(
-						Instruction{
+					op = Instruction{
+						.tag=.int_,
+						.data=.{
 							.interrupt={}
 						}
-					) catch unreachable;
+					};
 				},
 				else => {
 					std.debug.print("Expected opcode, found {s}\n", .{token.text});
 					return ParseError.UnexpectedToken;
 				}
 			}
+			std.debug.assert(op != null);
+			var inst = op.?;
+			const save_i = i;
+			switch (inst.data){
+				.move => {
+					const dest = reduce_location(&inst.data.move.dest);
+					const src = reduce_location(&inst.data.move.src);
+					reduce_binary_operator(@intFromEnum(inst.tag), data, &i, dest, src);
+					write_location(data, &i, dest);
+					write_location(data, &i, src);
+				},
+				.alu => {
+					const dest = reduce_location(&inst.data.alu.dest);
+					const left = reduce_location(&inst.data.alu.left);
+					const right = reduce_location(&inst.data.alu.right);
+					reduce_ternary_operator(@intFromEnum(inst.tag), data, &i, dest, left, right);
+					write_location(data, &i, dest);
+					write_location(data, &i, left);
+					write_location(data, &i, right);
+				},
+				.compare => {
+					const left = reduce_location(&inst.data.compare.left);
+					const right = reduce_location(&inst.data.compare.right);
+					reduce_binary_operator(@intFromEnum(inst.tag), data, &i, left, right);
+					write_location(data, &i, left);
+					write_location(data, &i, right);
+				},
+				.jump => {
+					const dest = reduce_location(&inst.data.jump.dest);
+					if (dest == .immediate){
+						data[i] = @intFromEnum(inst.tag);
+						i += 1;
+					}
+					else if (dest == .literal){
+						data[i] = @intFromEnum(inst.tag)+1;
+						i += 1;
+					}
+					else if (dest == .dereference){
+						data[i] = @intFromEnum(inst.tag)+2;
+						i += 1;
+					}
+					write_location(data, &i, dest);
+				},
+				.interrupt => {
+					data[i] = @intFromEnum(inst.tag);
+					i += 1;
+				}
+			}
+			if (debug){
+				for (save_i..i) |byte_index| {
+					std.debug.print("{x:02} ", .{data[byte_index]});
+				}
+				std.debug.print("\n", .{});
+			}
 		}
 	}
-	return ops;
+	return i;
 }
 
-pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64, labels: std.StringHashMap(u64)) ParseError!Location {
+pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64, labels: std.StringHashMap(u64), deref: bool) ParseError!Location {
 	try skip_whitespace(tokens.items, token_index);
 	if (token_index.* > tokens.items.len){
 		std.debug.print("Expected operand for instruction, found end of file\n", .{});
@@ -1937,20 +2119,22 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 		token_index.* += 1;
 		return Location {.literal=label_val};
 	}
-	if (token.tag == .OPEN_BRACK){
-		token_index.* += 1;
-		const reference = try parse_location(mem, tokens, token_index);
-		const location = mem.create(Location) catch
-			unreachable;
-		location.* = reference;
-		if (tokens.items[token_index.*].tag != .CLOSE_BRACK){
-			std.debug.print("Expected close bracket for dereferenced location\n", .{});
-			return ParseError.UnexpectedToken;
+	if (deref == false){
+		if (token.tag == .OPEN_BRACK){
+			token_index.* += 1;
+			const reference = try parse_location_or_label(mem, tokens, token_index, labels, true);
+			const location = mem.create(Location) catch
+				unreachable;
+			location.* = reference;
+			if (tokens.items[token_index.*].tag != .CLOSE_BRACK){
+				std.debug.print("Expected close bracket for dereferenced location\n", .{});
+				return ParseError.UnexpectedToken;
+			}
+			token_index.* += 1;
+			return Location{
+				.dereference=location
+			};
 		}
-		token_index.* += 1;
-		return Location{
-			.dereference=location
-		};
 	}
 	switch (token.tag){
 		.R0, .R1, .R2, .R3 => {
@@ -2077,29 +2261,29 @@ pub fn show_instruction(inst: *const Instruction) void {
 	if (!debug){
 		return;
 	}
-	switch (inst.*){
+	switch (inst.data){
 		.move => {
 			std.debug.print("mov ", .{});
-			show_location(&inst.move.dest);
-			show_location(&inst.move.src);
+			show_location(&inst.data.move.dest);
+			show_location(&inst.data.move.src);
 			std.debug.print("\n", .{});
 		},
 		.compare => {
 			std.debug.print("cmp ", .{});
-			show_location(&inst.compare.left);
-			show_location(&inst.compare.right);
+			show_location(&inst.data.compare.left);
+			show_location(&inst.data.compare.right);
 			std.debug.print("\n", .{});
 		},
 		.alu => {
-			std.debug.print("{} ", .{inst.alu.tag});
-			show_location(&inst.alu.dest);
-			show_location(&inst.alu.left);
-			show_location(&inst.alu.right);
+			std.debug.print("alu{} ", .{inst.tag});
+			show_location(&inst.data.alu.dest);
+			show_location(&inst.data.alu.left);
+			show_location(&inst.data.alu.right);
 			std.debug.print("\n", .{});
 		},
 		.jump => {
-			std.debug.print("{} ", .{inst.jump.tag});
-			show_location(&inst.jump.dest);
+			std.debug.print("jmp{} ", .{inst.tag});
+			show_location(&inst.data.jump.dest);
 			std.debug.print("\n", .{});
 		},
 		.interrupt => {
@@ -2266,212 +2450,1613 @@ pub fn val64(l: Location) RuntimeError!u64 {
 	unreachable;
 }
 
-pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
-	var ip: u64 = 0;
-	while (ip < instructions.items.len){
-		const inst = instructions.items[ip];
-		show_instruction(&inst);
-		switch (inst){
-			.move => {
-				const val = try val64(inst.move.src);
-				if (debug){
-					std.debug.print("src: {}\n", .{val});
-				}
-				try loc64(inst.move.dest, val);
-				ip += 1;
-			},
-			.compare => {
-				const left = try val64(inst.compare.left);
-				const right = try val64(inst.compare.right);
-				if (debug){
-					std.debug.print("left: {}, right: {}\n", .{left, right});
-				}
-				if (left > right) {
-					store_u64(vm.sr, 1);
-				}
-				else if (left < right) {
-					store_u64(vm.sr, 2);
-				}
-				else{
-					store_u64(vm.sr, 0);
-				}
-				ip += 1;
-			},
-			.alu => {
-				switch (inst.alu.tag){
-					.ADD => {
-						const left = try val64(inst.alu.left);
-						const right = try val64(inst.alu.right);
-						if (debug){
-							std.debug.print("left: {}, right: {}\n", .{left, right});
-						}
-						try loc64(inst.alu.dest, left+right);
-					},
-					.SUB => { 
-						const left = try val64(inst.alu.left);
-						const right = try val64(inst.alu.right);
-						if (debug){
-							std.debug.print("left: {}, right: {}\n", .{left, right});
-						}
-						try loc64(inst.alu.dest, left-right);
-					},
-					.MUL => { 
-						const left = try val64(inst.alu.left);
-						const right = try val64(inst.alu.right);
-						if (debug){
-							std.debug.print("left: {}, right: {}\n", .{left, right});
-						}
-						try loc64(inst.alu.dest, left*right);
-					},
-					.DIV => { 
-						const left = try val64(inst.alu.left);
-						const right = try val64(inst.alu.right);
-						if (debug){
-							std.debug.print("left: {}, right: {}\n", .{left, right});
-						}
-						try loc64(inst.alu.dest, left/right);
-					},
-					else => {
-						return RuntimeError.UnknownALU;
-					}
-				}
-				ip += 1;
-			},
-			.jump => {
-				switch(inst.jump.tag){
-					.JMP => {
-						ip = try val64(inst.jump.dest);
-						continue;
-					},
-					.JEQ => {
-						if (load_u64(vm.sr) == 0){
-							ip = try val64(inst.jump.dest);
-							continue;
-						}
-					},
-					.JNE => {
-						if (load_u64(vm.sr) != 0){
-							ip = try val64(inst.jump.dest);
-							continue;
-						}
-					},
-					.JLT => {
-						if (load_u64(vm.sr) == 2){
-							ip = try val64(inst.jump.dest);
-							continue;
-						}
-					},
-					.JGT => {
-						if (load_u64(vm.sr) == 1){
-							ip = try val64(inst.jump.dest);
-							continue;
-						}
-					},
-					.JLE => {
-						if (load_u64(vm.sr) != 1){
-							ip = try val64(inst.jump.dest);
-							continue;
-						}
-					},
-					.JGE => {
-						if (load_u64(vm.sr) != 2){
-							ip = try val64(inst.jump.dest);
-							continue;
-						}
-					},
-					.JZ => {
-						if (load_u64(vm.sr) == 0){
-							ip = try val64(inst.jump.dest);
-							continue;
-						}
-					},
-					.JNZ => {
-						if (load_u64(vm.sr) != 0){
-							ip = try val64(inst.jump.dest);
-							continue;
-						}
-					},
-					else => {
-						return RuntimeError.UnknownJump;
-					}
-				}
-				ip += 1;
-			},
-			.interrupt => {
-				//TODO propper interrupts
-				ip += 1;
-				if (vm.mem[vm.r0] == 0){
-					rl.updateTexture(frame_buffer_texture, &vm.mem[0]);
-					rl.beginDrawing();
-					rl.drawTexture(frame_buffer_texture, 0, 0, .white);
-					rl.endDrawing();
-				}
+const Opcode = enum(u8) {
+	mov_ii=0, mov_il, mov_id,
+	mov_li, mov_ll, mov_ld,
+	mov_di, mov_dl, mov_dd,
+
+	add_iii, add_iil, add_iid, add_ili, add_ill, add_ild, add_idi, add_idl, add_idd,
+	add_lii, add_lil, add_lid, add_lli, add_lll, add_lld, add_ldi, add_ldl, add_ldd,
+	add_dii, add_dil, add_did, add_dli, add_dll, add_dld, add_ddi, add_ddl, add_ddd,
+	sub_iii, sub_iil, sub_iid, sub_ili, sub_ill, sub_ild, sub_idi, sub_idl, sub_idd,
+	sub_lii, sub_lil, sub_lid, sub_lli, sub_lll, sub_lld, sub_ldi, sub_ldl, sub_ldd,
+	sub_dii, sub_dil, sub_did, sub_dli, sub_dll, sub_dld, sub_ddi, sub_ddl, sub_ddd,
+	mul_iii, mul_iil, mul_iid, mul_ili, mul_ill, mul_ild, mul_idi, mul_idl, mul_idd,
+	mul_lii, mul_lil, mul_lid, mul_lli, mul_lll, mul_lld, mul_ldi, mul_ldl, mul_ldd,
+	mul_dii, mul_dil, mul_did, mul_dli, mul_dll, mul_dld, mul_ddi, mul_ddl, mul_ddd,
+	div_iii, div_iil, div_iid, div_ili, div_ill, div_ild, div_idi, div_idl, div_idd,
+	div_lii, div_lil, div_lid, div_lli, div_lll, div_lld, div_ldi, div_ldl, div_ldd,
+	div_dii, div_dil, div_did, div_dli, div_dll, div_dld, div_ddi, div_ddl, div_ddd,
+
+	cmp_ii, cmp_il, cmp_id,
+	cmp_li, cmp_ll, cmp_ld,
+	cmp_di, cmp_dl, cmp_dd,
+
+	jmp_i, jmp_l, jmp_d,
+	jne_i, jne_l, jne_d,
+	jeq_i, jeq_l, jeq_d,
+	jnz_i, jnz_l, jnz_d,
+	jz_i, jz_l, jz_d,
+	jle_i, jle_l, jle_d,
+	jlt_i, jlt_l, jlt_d,
+	jge_i, jge_l, jge_d,
+	jgt_i, jgt_l, jgt_d,
+
+	int_
+};
+
+const OpBytesFn = *const fn (*u64) RuntimeError!bool;
+
+pub fn interpret(start:u64) RuntimeError!void {
+	var ip: u64 = start;
+	const ops: [154]OpBytesFn = .{
+		mov_ii_bytes, mov_il_bytes, mov_id_bytes, mov_li_bytes, mov_ll_bytes, mov_ld_bytes, mov_di_bytes, mov_dl_bytes, mov_dd_bytes,
+		add_iii_bytes, add_iil_bytes, add_iid_bytes, add_ili_bytes, add_ill_bytes, add_ild_bytes, add_idi_bytes, add_idl_bytes, add_idd_bytes, add_lii_bytes, add_lil_bytes, add_lid_bytes, add_lli_bytes, add_lll_bytes, add_lld_bytes, add_ldi_bytes, add_ldl_bytes, add_ldd_bytes, add_dii_bytes, add_dil_bytes, add_did_bytes, add_dli_bytes, add_dll_bytes, add_dld_bytes, add_ddi_bytes, add_ddl_bytes, add_ddd_bytes,
+		sub_iii_bytes, sub_iil_bytes, sub_iid_bytes, sub_ili_bytes, sub_ill_bytes, sub_ild_bytes, sub_idi_bytes, sub_idl_bytes, sub_idd_bytes, sub_lii_bytes, sub_lil_bytes, sub_lid_bytes, sub_lli_bytes, sub_lll_bytes, sub_lld_bytes, sub_ldi_bytes, sub_ldl_bytes, sub_ldd_bytes, sub_dii_bytes, sub_dil_bytes, sub_did_bytes, sub_dli_bytes, sub_dll_bytes, sub_dld_bytes, sub_ddi_bytes, sub_ddl_bytes, sub_ddd_bytes,
+		mul_iii_bytes, mul_iil_bytes, mul_iid_bytes, mul_ili_bytes, mul_ill_bytes, mul_ild_bytes, mul_idi_bytes, mul_idl_bytes, mul_idd_bytes, mul_lii_bytes, mul_lil_bytes, mul_lid_bytes, mul_lli_bytes, mul_lll_bytes, mul_lld_bytes, mul_ldi_bytes, mul_ldl_bytes, mul_ldd_bytes, mul_dii_bytes, mul_dil_bytes, mul_did_bytes, mul_dli_bytes, mul_dll_bytes, mul_dld_bytes, mul_ddi_bytes, mul_ddl_bytes, mul_ddd_bytes,
+		div_iii_bytes, div_iil_bytes, div_iid_bytes, div_ili_bytes, div_ill_bytes, div_ild_bytes, div_idi_bytes, div_idl_bytes, div_idd_bytes, div_lii_bytes, div_lil_bytes, div_lid_bytes, div_lli_bytes, div_lll_bytes, div_lld_bytes, div_ldi_bytes, div_ldl_bytes, div_ldd_bytes, div_dii_bytes, div_dil_bytes, div_did_bytes, div_dli_bytes, div_dll_bytes, div_dld_bytes, div_ddi_bytes, div_ddl_bytes, div_ddd_bytes,
+		cmp_ii_bytes, cmp_il_bytes, cmp_id_bytes, cmp_li_bytes, cmp_ll_bytes, cmp_ld_bytes, cmp_di_bytes, cmp_dl_bytes, cmp_dd_bytes,
+		jmp_i_bytes, jmp_l_bytes, jmp_d_bytes, jne_i_bytes, jne_l_bytes, jne_d_bytes, jeq_i_bytes, jeq_l_bytes, jeq_d_bytes, jnz_i_bytes, jnz_l_bytes, jnz_d_bytes, jz_i_bytes, jz_l_bytes, jz_d_bytes, jle_i_bytes, jle_l_bytes, jle_d_bytes, jlt_i_bytes, jlt_l_bytes, jlt_d_bytes, jge_i_bytes, jge_l_bytes, jge_d_bytes, jgt_i_bytes, jgt_l_bytes, jgt_d_bytes,
+		int_bytes
+	};
+	var running = true;
+	while (running) {
+		running = try ops[vm.mem[ip]](&ip);
+	}
+}
+
+pub fn mov_ii_bytes(ip: *u64) RuntimeError!bool{
+	store_u64(load_u64(load_u64(ip.*+1)), load_u64(load_u64(ip.*+9)));
+	ip.* += 17;
+	return true;
+}
+
+pub fn mov_il_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(load_u64(load_u64(ip.*+1)), load_u64(ip.*+9));
+	ip.* += 17;
+	return true;
+}
+
+pub fn mov_id_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(load_u64(load_u64(ip.*+1)), load_u64(load_u64(load_u64(ip.*+9))));
+	ip.* += 17;
+	return true;
+}
+
+pub fn mov_li_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(load_u64(ip.*+1), load_u64(load_u64(ip.*+9)));
+	ip.* += 17;
+	return true;
+}
+
+pub fn mov_ll_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(load_u64(ip.*+1), load_u64(ip.*+9));
+	ip.* += 17;
+	return true;
+}
+
+pub fn mov_ld_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(load_u64(ip.*+1), load_u64(load_u64(load_u64(ip.*+9))));
+	ip.* += 17;
+	return true;
+}
+
+pub fn mov_di_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(load_u64(load_u64(load_u64(ip.*+1))), load_u64(load_u64(ip.*+9)));
+	ip.* += 17;
+	return true;
+}
+
+pub fn mov_dl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(load_u64(load_u64(load_u64(ip.*+1))), load_u64(ip.*+9));
+	ip.* += 17;
+	return true;
+}
+
+pub fn mov_dd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(load_u64(load_u64(load_u64(ip.*+1))), load_u64(load_u64(load_u64(ip.*+9))));
+	ip.* += 17;
+	return true;
+}
+
+pub fn add_iii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) +
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_iil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) +
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_iid_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) +
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_ili_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) +
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_ill_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) +
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_ild_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) +
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_idi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) +
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_idl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) +
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_idd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) +
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_lii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) +
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_lil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) +
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_lid_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) +
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_lli_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) +
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_lll_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) +
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_lld_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) +
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_ldi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) +
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_ldl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) +
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_ldd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) +
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_dii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) +
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_dil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) +
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_did_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) +
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_dli_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) +
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_dll_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) +
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_dld_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) +
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_ddi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) +
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_ddl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) +
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn add_ddd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) +
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_iii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) -
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_iil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) -
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_iid_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) -
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_ili_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) -
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_ill_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) -
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_ild_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) -
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_idi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) -
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_idl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) -
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_idd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) -
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_lii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) -
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_lil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) -
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_lid_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) -
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_lli_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) -
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_lll_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) -
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_lld_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) -
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_ldi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) -
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_ldl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) -
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_ldd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) -
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_dii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) -
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_dil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) -
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_did_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) -
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_dli_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) -
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_dll_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) -
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_dld_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) -
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_ddi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) -
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_ddl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) -
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn sub_ddd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) -
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_iii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) *
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_iil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) *
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_iid_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) *
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_ili_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) *
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_ill_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) *
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_ild_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) *
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_idi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) *
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_idl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) *
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_idd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) *
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_lii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) *
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_lil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) *
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_lid_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) *
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_lli_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) *
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_lll_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) *
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_lld_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) *
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_ldi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) *
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_ldl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) *
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_ldd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) *
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_dii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) *
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_dil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) *
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_did_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) *
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_dli_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) *
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_dll_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) *
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_dld_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) *
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_ddi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) *
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_ddl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) *
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn mul_ddd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) *
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_iii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) /
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_iil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) /
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_iid_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(ip.*+9)) /
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_ili_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) /
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_ill_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) /
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_ild_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(ip.*+9) /
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_idi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) /
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_idl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) /
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_idd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(ip.*+1)),
+		load_u64(load_u64(load_u64(ip.*+9))) /
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_lii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) /
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_lil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) /
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_lid_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(ip.*+9)) /
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_lli_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) /
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_lll_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) /
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_lld_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(ip.*+9) /
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_ldi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) /
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_ldl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) /
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_ldd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(ip.*+1),
+		load_u64(load_u64(load_u64(ip.*+9))) /
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_dii_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) /
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_dil_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) /
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_did_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(ip.*+9)) /
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_dli_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) /
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_dll_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) /
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_dld_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(ip.*+9) /
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_ddi_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) /
+		load_u64(load_u64(ip.*+17)));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_ddl_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) /
+		load_u64(ip.*+17));
+	ip.* += 25;
+	return true;
+}
+
+pub fn div_ddd_bytes(ip: *u64) RuntimeError!bool {
+	store_u64(
+		load_u64(load_u64(load_u64(ip.*+1))),
+		load_u64(load_u64(load_u64(ip.*+9))) /
+		load_u64(load_u64(load_u64(ip.*+17))));
+	ip.* += 25;
+	return true;
+}
+
+pub fn cmp_ii_bytes(ip: *u64) RuntimeError!bool {
+	const left = load_u64(load_u64(ip.*+1));
+	const right = load_u64(load_u64(ip.*+9));
+	if (left > right){
+		store_u64(vm.sr, 1);
+	}
+	else if (left < right){
+		store_u64(vm.sr, 2);
+	}
+	else {
+		store_u64(vm.sr, 0);
+	}
+	ip.* += 17;
+	return true;
+}
+
+pub fn cmp_il_bytes(ip: *u64) RuntimeError!bool {
+	const left = load_u64(load_u64(ip.*+1));
+	const right = load_u64(ip.*+9);
+	if (left > right){
+		store_u64(vm.sr, 1);
+	}
+	else if (left < right){
+		store_u64(vm.sr, 2);
+	}
+	else {
+		store_u64(vm.sr, 0);
+	}
+	ip.* += 17;
+	return true;
+}
+
+pub fn cmp_id_bytes(ip: *u64) RuntimeError!bool {
+	const left = load_u64(load_u64(ip.*+1));
+	const right = load_u64(load_u64(load_u64(ip.*+9)));
+	if (left > right){
+		store_u64(vm.sr, 1);
+	}
+	else if (left < right){
+		store_u64(vm.sr, 2);
+	}
+	else {
+		store_u64(vm.sr, 0);
+	}
+	ip.* += 17;
+	return true;
+}
+
+pub fn cmp_li_bytes(ip: *u64) RuntimeError!bool {
+	const left = load_u64(ip.*+1);
+	const right = load_u64(load_u64(ip.*+9));
+	if (left > right){
+		store_u64(vm.sr, 1);
+	}
+	else if (left < right){
+		store_u64(vm.sr, 2);
+	}
+	else {
+		store_u64(vm.sr, 0);
+	}
+	ip.* += 17;
+	return true;
+}
+
+pub fn cmp_ll_bytes(ip: *u64) RuntimeError!bool {
+	const left = load_u64(ip.*+1);
+	const right = load_u64(ip.*+9);
+	if (left > right){
+		store_u64(vm.sr, 1);
+	}
+	else if (left < right){
+		store_u64(vm.sr, 2);
+	}
+	else {
+		store_u64(vm.sr, 0);
+	}
+	ip.* += 17;
+	return true;
+}
+
+pub fn cmp_ld_bytes(ip: *u64) RuntimeError!bool {
+	const left = load_u64(ip.*+1);
+	const right = load_u64(load_u64(load_u64(ip.*+9)));
+	if (left > right){
+		store_u64(vm.sr, 1);
+	}
+	else if (left < right){
+		store_u64(vm.sr, 2);
+	}
+	else {
+		store_u64(vm.sr, 0);
+	}
+	ip.* += 17;
+	return true;
+}
+
+pub fn cmp_di_bytes(ip: *u64) RuntimeError!bool {
+	const left = load_u64(load_u64(load_u64(ip.*+1)));
+	const right = load_u64(load_u64(ip.*+9));
+	if (left > right){
+		store_u64(vm.sr, 1);
+	}
+	else if (left < right){
+		store_u64(vm.sr, 2);
+	}
+	else {
+		store_u64(vm.sr, 0);
+	}
+	ip.* += 17;
+	return true;
+}
+
+pub fn cmp_dl_bytes(ip: *u64) RuntimeError!bool {
+	const left = load_u64(load_u64(load_u64(ip.*+1)));
+	const right = load_u64(ip.*+9);
+	if (left > right){
+		store_u64(vm.sr, 1);
+	}
+	else if (left < right){
+		store_u64(vm.sr, 2);
+	}
+	else {
+		store_u64(vm.sr, 0);
+	}
+	ip.* += 17;
+	return true;
+}
+
+pub fn cmp_dd_bytes(ip: *u64) RuntimeError!bool {
+	const left = load_u64(load_u64(load_u64(ip.*+1)));
+	const right = load_u64(load_u64(load_u64(ip.*+9)));
+	if (left > right){
+		store_u64(vm.sr, 1);
+	}
+	else if (left < right){
+		store_u64(vm.sr, 2);
+	}
+	else {
+		store_u64(vm.sr, 0);
+	}
+	ip.* += 17;
+	return true;
+}
+
+pub fn jmp_i_bytes(ip: *u64) RuntimeError!bool {
+	const dest = load_u64(load_u64(ip.*+1));
+	ip.* = dest;
+	return true;
+}
+
+pub fn jmp_l_bytes(ip: *u64) RuntimeError!bool {
+	const dest = load_u64(ip.*+1);
+	ip.* = dest;
+	return true;
+}
+
+pub fn jmp_d_bytes(ip: *u64) RuntimeError!bool {
+	const dest = load_u64(load_u64(load_u64(ip.*+1)));
+	ip.* = dest;
+	return true;
+}
+
+pub fn jne_i_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 0){
+		ip.* = load_u64(load_u64(ip.*+1));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jne_l_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 0){
+		ip.* = load_u64(ip.*+1);
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jne_d_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 0){
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jeq_i_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 0){
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jeq_l_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 0){
+		ip.* = load_u64(load_u64(ip.*+1));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jeq_d_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 0){
+		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jnz_i_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 0){
+		ip.* = load_u64(load_u64(ip.*+1));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jnz_l_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 0){
+		ip.* = load_u64(ip.*+1);
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jnz_d_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 0){
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jz_i_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 0){
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jz_l_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 0){
+		ip.* = load_u64(load_u64(ip.*+1));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jz_d_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 0){
+		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jgt_i_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 1){
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jgt_l_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 1){
+		ip.* = load_u64(load_u64(ip.*+1));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jgt_d_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 1){
+		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jge_i_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 2){
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jge_l_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 2){
+		ip.* = load_u64(load_u64(ip.*+1));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jge_d_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 2){
+		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jlt_i_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 2){
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jlt_l_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 2){
+		ip.* = load_u64(load_u64(ip.*+1));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jlt_d_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) == 2){
+		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jle_i_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 1){
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jle_l_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 1){
+		ip.* = load_u64(load_u64(ip.*+1));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn jle_d_bytes(ip: *u64) RuntimeError!bool {
+	if (load_u64(vm.sr) != 1){
+		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+	}
+	else {
+		ip.* += 9;
+	}
+	return true;
+}
+
+pub fn int_bytes(ip: *u64) RuntimeError!bool {
+	ip.* += 1;
+	if (vm.mem[vm.r0] == 0){
+		rl.updateTexture(frame_buffer_texture, &vm.mem[0]);
+		rl.beginDrawing();
+		rl.drawTexture(frame_buffer_texture, 0, 0, .white);
+		rl.endDrawing();
+	}
+	return true;
+}
+
+pub fn reduce_location(loc: *Location) Location {
+	switch (loc.*){
+		.register => {
+			switch (loc.register){
+				.R0 => {
+					loc.* = Location{
+						.immediate = vm.r0
+					};
+				},
+				.R1 => {
+					loc.* = Location{
+						.immediate = vm.r1
+					};
+				},
+				.R2 => {
+					loc.* = Location{
+						.immediate = vm.r2
+					};
+				},
+				.R3 => {
+					loc.* = Location{
+						.immediate = vm.r3
+					};
+				},
+				else => {unreachable;}
 			}
+		},
+		.dereference => {
+			_ = reduce_location(loc.dereference);
+		},
+		else => { }
+	}
+	return loc.*;
+}
+
+pub fn reduce_ternary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location, c: Location) void {
+	if (a == .immediate){
+		reduce_binary_operator(seed, data, i, b, c);
+	}
+	else if (a == .literal){
+		reduce_binary_operator(seed+9, data, i, b, c);
+	}
+	else if (a == .dereference){
+		reduce_binary_operator(seed+18, data, i, b, c);
+	}
+}
+
+pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location) void {
+	if (a == .immediate){
+		if (b == .immediate){
+			data[i.*] = seed;
+			i.* += 1;
+		}
+		else if (b == .literal){
+			data[i.*] = seed + 1;
+			i.* += 1;
+		}
+		else if (b == .dereference){
+			data[i.*] = seed+2;
+			i.* += 1;
+		}
+	}
+	else if (a == .literal){
+		if (b == .immediate){
+			data[i.*] = seed+3;
+			i.* += 1;
+		}
+		else if (b == .literal){
+			data[i.*] = seed+4;
+			i.* += 1;
+		}
+		else if (b == .dereference){
+			data[i.*] = seed+5;
+			i.* += 1;
+		}
+	}
+	else if (a == .dereference){
+		if (b == .immediate){
+			data[i.*] = seed+6;
+			i.* += 1;
+		}
+		else if (b == .literal){
+			data[i.*] = seed+7;
+			i.* += 1;
+		}
+		else if (b == .dereference){
+			data[i.*] = seed+8;
+			i.* += 1;
 		}
 	}
 }
 
-//pub fn serialize(mem: *const std.mem.Allocator, instructions: Buffer(Instruction)) !void {
-	//var file = try std.fs.cwd().createFile(
-		//"out.bin",
-		//.{.truncate=true}
-	//);
-	//defer file.close();
-	//var data = Buffer(u8).init(mem.*);
-	//for (instructions.items) |inst| {
-		//switch (inst){
-			//.move => {
-				//data.append(0x01)
-					//catch unreachable;
-				//write_location(&data, inst.move.dest);
-				//write_location(&data, inst.move.src);
-			//},
-			//.alu => {
-				//data.append(@intFromEnum(inst.alu.tag))
-					//catch unreachable;
-				//write_location(&data, inst.move.dest);
-				//write_location(&data, inst.move.left);
-				//write_location(&data, inst.move.right);
-			//},
-			//.compare => {
-				//data.append(0x02)
-					//catch unreachable;
-				//write_location(&data, inst.move.left);
-				//write_location(&data, inst.move.right);
-			//},
-			//.jump => {
-				//data.append(@intFromEnum(inst.jump.tag))
-					//catch unreachable;
-				//write_location(&data, inst.move.dest);
-			//},
-			//.interrupt => {
-				//data.append(0x03)
-					//catch unreachable;
-			//}
-		//}
-	//}
-	//try file.writeAll(data.items);
-//}
-//
-//pub fn write_location(data: *Buffer(u8), loc: Location) void {
-	//switch(loc){
-		//.immediate => {
-			//data.append(loc.immediate)
-				//catch unreachable;
-		//},
-		//.literal => {
-			//data.append(0x04)
-				//catch unreachable;
-			//data.append(loc.literal)
-				//catch unreachable;
-		//},
-		////TODO uh oh this is too simple and doesnt work lol
-	//}
-//}
-//
+pub fn write_location(data: []u8, i: *u64, loc: Location) void {
+	switch(loc){
+		.immediate => {
+			const bytes:[8]u8 = @bitCast(loc.immediate);
+			@memcpy(data[i.* .. i.*+8], &bytes);
+			i.* += 8;
+		},
+		.literal => {
+			const bytes:[8]u8 = @bitCast(loc.literal);
+			@memcpy(data[i.* .. i.*+8], &bytes);
+			i.* += 8;
+		},
+		.dereference => {
+			write_location(data, i, loc.dereference.*);
+		},
+		.register => {
+			unreachable;
+		}
+	}
+}
 
-//TODO serialization properly
-//TODO loading
 //TODO more instructions
 	//alu shifts
 	//logical operators
@@ -2481,4 +4066,3 @@ pub fn interpret(instructions: Buffer(Instruction)) RuntimeError!void {
 	// interrupts: write n to file, read n from file, get input from keyboard/mouse, send info to screen
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
-
