@@ -2,7 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
-const debug = true;
+const debug = false;
 
 const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -166,19 +166,16 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 	}
 	if (run){
 		var index:u64 = 0;
-		const program_len = parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], token_stream, &index, false) catch |err| {
+		var runtime = VM.init();
+		const program_len = parse_bytecode(mem, runtime.mem[frame_buffer..vm.mem.len], token_stream, &index, false) catch |err| {
 			std.debug.print("Bytecode Parse Error {}\n", .{err});
 			return null;
 		};
+		vm = runtime;
 		if (debug){
 			std.debug.print("program length: {}\n", .{program_len});
-			for (vm.mem[frame_buffer .. frame_buffer+program_len]) |byte| {
-				std.debug.print("{x:02} ", .{byte});
-			}
-			std.debug.print("\n", .{});
 			std.debug.print("parsed bytecode--------------------\n", .{});
 		}
-		vm = VM.init();
 		interpret(start_ip) catch |err| {
 			std.debug.print("Runtime Error {}\n", .{err});
 			return null;
@@ -2098,6 +2095,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				}
 			}
 			if (debug){
+				std.debug.print("{} : ", .{save_i+start_ip});
 				for (save_i..i) |byte_index| {
 					std.debug.print("{x:02} ", .{data[byte_index]});
 				}
@@ -2501,6 +2499,9 @@ pub fn interpret(start:u64) RuntimeError!void {
 	};
 	var running = true;
 	while (running) {
+		if (debug){
+			std.debug.print("{}: {x:02} ...\n", .{ip, vm.mem[ip]});
+		}
 		running = try ops[vm.mem[ip]](&ip);
 	}
 }
@@ -3725,7 +3726,7 @@ pub fn jne_d_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jeq_i_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+		ip.* = load_u64(load_u64(ip.*+1));
 	}
 	else {
 		ip.* += 9;
@@ -3735,7 +3736,7 @@ pub fn jeq_i_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jeq_l_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(ip.*+1));
+		ip.* = load_u64(ip.*+1);
 	}
 	else {
 		ip.* += 9;
@@ -3745,7 +3746,7 @@ pub fn jeq_l_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jeq_d_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
 	}
 	else {
 		ip.* += 9;
@@ -3785,7 +3786,7 @@ pub fn jnz_d_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jz_i_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+		ip.* = load_u64(load_u64(ip.*+1));
 	}
 	else {
 		ip.* += 9;
@@ -3795,7 +3796,7 @@ pub fn jz_i_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jz_l_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(ip.*+1));
+		ip.* = load_u64(ip.*+1);
 	}
 	else {
 		ip.* += 9;
@@ -3805,7 +3806,7 @@ pub fn jz_l_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jz_d_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
 	}
 	else {
 		ip.* += 9;
@@ -3815,7 +3816,7 @@ pub fn jz_d_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jgt_i_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 1){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+		ip.* = load_u64(load_u64(ip.*+1));
 	}
 	else {
 		ip.* += 9;
@@ -3825,7 +3826,7 @@ pub fn jgt_i_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jgt_l_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 1){
-		ip.* = load_u64(load_u64(ip.*+1));
+		ip.* = load_u64(ip.*+1);
 	}
 	else {
 		ip.* += 9;
@@ -3835,7 +3836,7 @@ pub fn jgt_l_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jgt_d_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 1){
-		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
 	}
 	else {
 		ip.* += 9;
@@ -3845,7 +3846,7 @@ pub fn jgt_d_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jge_i_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) != 2){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+		ip.* = load_u64(load_u64(ip.*+1));
 	}
 	else {
 		ip.* += 9;
@@ -3855,7 +3856,7 @@ pub fn jge_i_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jge_l_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) != 2){
-		ip.* = load_u64(load_u64(ip.*+1));
+		ip.* = load_u64(ip.*+1);
 	}
 	else {
 		ip.* += 9;
@@ -3865,7 +3866,7 @@ pub fn jge_l_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jge_d_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) != 2){
-		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
 	}
 	else {
 		ip.* += 9;
@@ -3875,7 +3876,7 @@ pub fn jge_d_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jlt_i_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 2){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+		ip.* = load_u64(load_u64(ip.*+1));
 	}
 	else {
 		ip.* += 9;
@@ -3885,7 +3886,7 @@ pub fn jlt_i_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jlt_l_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 2){
-		ip.* = load_u64(load_u64(ip.*+1));
+		ip.* = load_u64(ip.*+1);
 	}
 	else {
 		ip.* += 9;
@@ -3895,7 +3896,7 @@ pub fn jlt_l_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jlt_d_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) == 2){
-		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
 	}
 	else {
 		ip.* += 9;
@@ -3905,7 +3906,7 @@ pub fn jlt_d_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jle_i_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) != 1){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+		ip.* = load_u64(load_u64(ip.*+1));
 	}
 	else {
 		ip.* += 9;
@@ -3915,7 +3916,7 @@ pub fn jle_i_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jle_l_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) != 1){
-		ip.* = load_u64(load_u64(ip.*+1));
+		ip.* = load_u64(ip.*+1);
 	}
 	else {
 		ip.* += 9;
@@ -3925,7 +3926,7 @@ pub fn jle_l_bytes(ip: *u64) RuntimeError!bool {
 
 pub fn jle_d_bytes(ip: *u64) RuntimeError!bool {
 	if (load_u64(vm.sr) != 1){
-		ip.* = load_u64(load_u64(load_u64(load_u64(ip.*+1))));
+		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
 	}
 	else {
 		ip.* += 9;
