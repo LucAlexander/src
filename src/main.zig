@@ -1879,6 +1879,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 						}
 						comp_persistent.put(name.text, val)
 							catch unreachable;
+						persistent.put(name.text, val)
+							catch unreachable;
 					}
 					else{
 						if (debug){
