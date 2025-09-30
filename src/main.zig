@@ -2,7 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
-const debug = true;
+const debug = false;
 
 const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -2525,1031 +2525,1145 @@ pub fn interpret(start:u64) RuntimeError!void {
 }
 
 pub fn mov_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
-	store_u64(load_u64(ip.*+1), load_u64(load_u64(ip.*+9)));
+	const p = ip.*;
 	ip.* += 17;
+	store_u64(load_u64(p+1), load_u64(load_u64(p+9)));
 	return true;
 }
 
 pub fn mov_il_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (debug){
-		std.debug.print("loading from {}\n", .{load_u64(ip.*+1)});
-	}
-	store_u64(load_u64(ip.*+1), load_u64(ip.*+9));
+	const p = ip.*;
 	ip.* += 17;
+	store_u64(load_u64(p+1), load_u64(p+9));
 	return true;
 }
 
 pub fn mov_id_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(load_u64(ip.*+1), load_u64(load_u64(load_u64(ip.*+9))));
+	const p = ip.*;
 	ip.* += 17;
+	store_u64(load_u64(p+1), load_u64(load_u64(load_u64(p+9))));
 	return true;
 }
 
 pub fn mov_li_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(load_u64(ip.*+1), load_u64(load_u64(ip.*+9)));
+	const p = ip.*;
 	ip.* += 17;
+	store_u64(load_u64(p+1), load_u64(load_u64(p+9)));
 	return true;
 }
 
 pub fn mov_ll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(load_u64(ip.*+1), load_u64(ip.*+9));
+	const p = ip.*;
 	ip.* += 17;
+	store_u64(load_u64(p+1), load_u64(p+9));
 	return true;
 }
 
 pub fn mov_ld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(load_u64(ip.*+1), load_u64(load_u64(load_u64(ip.*+9))));
+	const p = ip.*;
 	ip.* += 17;
+	store_u64(load_u64(p+1), load_u64(load_u64(load_u64(p+9))));
 	return true;
 }
 
 pub fn mov_di_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(load_u64(load_u64(ip.*+1)), load_u64(load_u64(ip.*+9)));
+	const p = ip.*;
 	ip.* += 17;
+	store_u64(load_u64(load_u64(p+1)), load_u64(load_u64(p+9)));
 	return true;
 }
 
 pub fn mov_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(load_u64(load_u64(ip.*+1)), load_u64(ip.*+9));
+	const p = ip.*;
 	ip.* += 17;
+	store_u64(load_u64(load_u64(p+1)), load_u64(p+9));
 	return true;
 }
 
 pub fn mov_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(load_u64(load_u64(ip.*+1)), load_u64(load_u64(load_u64(ip.*+9))));
+	const p = ip.*;
 	ip.* += 17;
+	store_u64(load_u64(load_u64(p+1)), load_u64(load_u64(load_u64(p+9))));
 	return true;
 }
 
 pub fn add_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) +
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) +
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn add_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) +
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) +
+		load_u64(p+17));
 	return true;
 }
 
 pub fn add_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) +
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) +
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn add_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) +
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) +
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn add_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) +
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) +
+		load_u64(p+17));
 	return true;
 }
 
 pub fn add_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) +
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) +
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn add_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) +
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) +
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn add_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) +
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) +
+		load_u64(p+17));
 	return true;
 }
 
 pub fn add_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) +
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) +
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn add_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) +
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) +
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn add_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) +
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) +
+		load_u64(p+17));
 	return true;
 }
 
 pub fn add_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) +
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) +
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn add_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) +
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) +
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn add_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) +
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) +
+		load_u64(p+17));
 	return true;
 }
 
 pub fn add_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) +
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) +
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn add_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) +
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) +
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn add_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) +
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) +
+		load_u64(p+17));
 	return true;
 }
 
 pub fn add_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) +
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) +
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn add_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) +
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) +
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn add_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) +
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) +
+		load_u64(p+17));
 	return true;
 }
 
 pub fn add_did_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) +
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) +
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn add_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) +
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) +
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn add_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) +
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) +
+		load_u64(p+17));
 	return true;
 }
 
 pub fn add_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) +
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) +
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn add_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) +
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) +
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn add_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) +
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) +
+		load_u64(p+17));
 	return true;
 }
 
 pub fn add_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) +
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) +
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn sub_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) -
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) -
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn sub_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) -
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) -
+		load_u64(p+17));
 	return true;
 }
 
 pub fn sub_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) -
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) -
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn sub_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) -
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) -
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn sub_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) -
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) -
+		load_u64(p+17));
 	return true;
 }
 
 pub fn sub_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) -
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) -
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn sub_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) -
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) -
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn sub_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) -
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) -
+		load_u64(p+17));
 	return true;
 }
 
 pub fn sub_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) -
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) -
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn sub_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) -
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) -
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn sub_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) -
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) -
+		load_u64(p+17));
 	return true;
 }
 
 pub fn sub_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) -
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) -
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn sub_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) -
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) -
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn sub_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) -
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) -
+		load_u64(p+17));
 	return true;
 }
 
 pub fn sub_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) -
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) -
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn sub_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) -
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) -
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn sub_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) -
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) -
+		load_u64(p+17));
 	return true;
 }
 
 pub fn sub_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) -
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) -
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn sub_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) -
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) -
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn sub_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) -
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) -
+		load_u64(p+17));
 	return true;
 }
 
 pub fn sub_did_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) -
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) -
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn sub_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) -
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) -
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn sub_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) -
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) -
+		load_u64(p+17));
 	return true;
 }
 
 pub fn sub_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) -
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) -
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn sub_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) -
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) -
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn sub_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) -
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) -
+		load_u64(p+17));
 	return true;
 }
 
 pub fn sub_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) -
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) -
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn mul_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) *
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) *
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn mul_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) *
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) *
+		load_u64(p+17));
 	return true;
 }
 
 pub fn mul_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) *
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) *
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn mul_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) *
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) *
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn mul_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) *
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) *
+		load_u64(p+17));
 	return true;
 }
 
 pub fn mul_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) *
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) *
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn mul_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) *
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) *
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn mul_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) *
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) *
+		load_u64(p+17));
 	return true;
 }
 
 pub fn mul_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) *
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) *
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn mul_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) *
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) *
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn mul_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) *
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) *
+		load_u64(p+17));
 	return true;
 }
 
 pub fn mul_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) *
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) *
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn mul_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) *
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) *
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn mul_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) *
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) *
+		load_u64(p+17));
 	return true;
 }
 
 pub fn mul_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) *
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) *
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn mul_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) *
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) *
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn mul_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) *
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) *
+		load_u64(p+17));
 	return true;
 }
 
 pub fn mul_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) *
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) *
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn mul_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) *
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) *
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn mul_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) *
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) *
+		load_u64(p+17));
 	return true;
 }
 
 pub fn mul_did_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) *
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) *
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn mul_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) *
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) *
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn mul_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) *
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) *
+		load_u64(p+17));
 	return true;
 }
 
 pub fn mul_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) *
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) *
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn mul_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) *
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) *
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn mul_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) *
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) *
+		load_u64(p+17));
 	return true;
 }
 
 pub fn mul_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) *
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) *
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn div_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) /
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) /
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn div_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) /
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) /
+		load_u64(p+17));
 	return true;
 }
 
 pub fn div_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) /
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) /
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn div_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) /
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) /
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn div_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) /
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) /
+		load_u64(p+17));
 	return true;
 }
 
 pub fn div_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) /
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) /
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn div_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) /
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) /
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn div_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) /
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) /
+		load_u64(p+17));
 	return true;
 }
 
 pub fn div_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) /
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) /
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn div_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) /
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) /
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn div_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) /
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) /
+		load_u64(p+17));
 	return true;
 }
 
 pub fn div_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(ip.*+9)) /
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(p+9)) /
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn div_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) /
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) /
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn div_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) /
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) /
+		load_u64(p+17));
 	return true;
 }
 
 pub fn div_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(ip.*+9) /
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(p+9) /
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn div_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) /
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) /
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn div_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) /
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) /
+		load_u64(p+17));
 	return true;
 }
 
 pub fn div_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(ip.*+1),
-		load_u64(load_u64(load_u64(ip.*+9))) /
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(p+1),
+		load_u64(load_u64(load_u64(p+9))) /
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn div_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) /
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) /
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn div_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) /
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) /
+		load_u64(p+17));
 	return true;
 }
 
 pub fn div_did_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(ip.*+9)) /
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(p+9)) /
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn div_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) /
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) /
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn div_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) /
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) /
+		load_u64(p+17));
 	return true;
 }
 
 pub fn div_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(ip.*+9) /
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(p+9) /
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
 pub fn div_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) /
-		load_u64(load_u64(ip.*+17)));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) /
+		load_u64(load_u64(p+17)));
 	return true;
 }
 
 pub fn div_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) /
-		load_u64(ip.*+17));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) /
+		load_u64(p+17));
 	return true;
 }
 
 pub fn div_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	store_u64(
-		load_u64(load_u64(ip.*+1)),
-		load_u64(load_u64(load_u64(ip.*+9))) /
-		load_u64(load_u64(load_u64(ip.*+17))));
+	const p = ip.*;
 	ip.* += 25;
+	store_u64(
+		load_u64(load_u64(p+1)),
+		load_u64(load_u64(load_u64(p+9))) /
+		load_u64(load_u64(load_u64(p+17))));
 	return true;
 }
 
@@ -3962,9 +4076,14 @@ pub fn int_bytes(ip: *align(1) u64) RuntimeError!bool {
 		rl.beginDrawing();
 		rl.drawTexture(frame_buffer_texture, 0, 0, .white);
 		rl.endDrawing();
+		return true;
 	}
 	if (vm.mem[vm.r0] == 1){
 		return false;
+	}
+	if (vm.mem[vm.r0] == 2){
+		std.debug.print("{}\n", .{vm.mem[vm.r1]});
+		return true;
 	}
 	return true;
 }

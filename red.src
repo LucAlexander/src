@@ -1,0 +1,117 @@
+
+bind 1 +comment:// ... $ {
+	
+}
+
+comp
+	mov r0 !mtp
+	sub r0 r0 !8
+	bind 0 tmp = r0
+	mov tmp !mtp
+	sub tmp tmp !8
+	mov r0 !1
+	int
+run
+bind 1 sp = tmp
+comp
+	sub tmp tmp !8
+	mov r0 !1
+	int
+run
+bind 1 fp = tmp
+comp
+	sub tmp tmp !8
+	mov r0 !1
+	int
+run
+bind 0 stack_start = tmp
+mov sp !stack_start
+mov fp !stack_start
+
+bind 1 psh +x {
+	sub sp sp !8
+	mov [sp] x
+}
+
+bind 1 pop +r {
+	mov r [sp]
+	add sp sp !8
+}
+
+bind 1 ret {
+	mov sp fp
+	pop fp
+	pop ip
+}
+
+bind 1 ( +symbol ) {
+	bind 0 tag = ip
+	psh tag
+	add [sp] [sp] !135
+	psh fp
+	mov fp sp
+	jmp symbol
+}
+
+bind 1 comptime +body:\{...\} {
+	comp
+		body
+		mov r0 !1
+		int
+	run
+}
+
+bind 1 def +name +args:{+arg %} +body:\= ... \; { 
+	bind 0 name = ip
+	comptime {
+		mov tmp !0
+		mov r1 fp
+	}
+	args{
+		comptime {
+			add tmp tmp !8
+			sub r2 r1 tmp
+		}
+		bind 0 arg = r2
+	}
+	body
+	ret
+}
+
+bind 1 def +name +body:\= ... \; {
+	bind 0 name = ip
+	body
+	ret
+}
+
+bind 1 exit {
+	mov r0 !1
+	int
+}
+
+(main)
+exit
+
+def clear_screen =
+	mov r0 !0
+
+	mov r1 !fbw
+	mov r2 !fbh
+
+	mul r1 r1 r2
+	mul r1 r1 !4
+
+	bind 0 loop = ip
+		mov [r0] !128 
+		add r0 r0 !1
+
+		cmp r0 r1
+		jge end
+		jmp loop
+
+	bind 0 end = ip
+	mov r0 !0
+	int
+;
+
+def main = (clear_screen) ;
