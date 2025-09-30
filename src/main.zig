@@ -28,6 +28,8 @@ const total_mem_size = frame_buffer+mem_size+register_section;
 const VM = struct {
 	mem: [total_mem_size]u8,
 	words: []align(1) u64,
+	half_words: []align(1) u32,
+	quarter_words: []align(1) u16,
 	r0: u64,
 	r1: u64,
 	r2: u64,
@@ -39,6 +41,8 @@ const VM = struct {
 		return VM{
 			.mem=undefined,
 			.words=undefined,
+			.half_words=undefined,
+			.quarter_words=undefined,
 			.r0=main_size,
 			.r1=main_size+1*8,
 			.r2=main_size+2*8,
@@ -2495,6 +2499,8 @@ const OpBytesFn = *const fn (*align(1) u64) RuntimeError!bool;
 
 pub fn interpret(start:u64) RuntimeError!void {
 	vm.words = std.mem.bytesAsSlice(u64, vm.mem[0..]);
+	vm.half_words = std.mem.bytesAsSlice(u32, vm.mem[0..]);
+	vm.quarter_words = std.mem.bytesAsSlice(u16, vm.mem[0..]);
 	const ip: *align(1) u64= &vm.words[vm.ip/8];
 	ip.* = start;
 	const ops: [154]OpBytesFn = .{
