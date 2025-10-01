@@ -3,28 +3,36 @@ bind 1 +comment:// ... $ {
 	
 }
 
-comp
-	mov r0 !mtp
-	sub r0 r0 !8
-	bind 0 tmp = r0
+bind 1 comptime +body:\{...\} {
+	comp
+		body
+		mov r0 !1
+		int
+	run
+}
+
+comptime {
+	comptime {
+		mov r1 !mtp
+		sub r1 r1 !8
+	}
+	bind 0 tmp = r1
+
 	mov tmp !mtp
 	sub tmp tmp !8
-	mov r0 !1
-	int
-run
+}
 bind 1 sp = tmp
-comp
+
+comptime {
 	sub tmp tmp !8
-	mov r0 !1
-	int
-run
+}
 bind 1 fp = tmp
-comp
+
+comptime {
 	sub tmp tmp !8
-	mov r0 !1
-	int
-run
+}
 bind 0 stack_start = tmp
+
 mov sp !stack_start
 mov fp !stack_start
 
@@ -47,18 +55,10 @@ bind 1 ret {
 bind 1 ( +symbol ) {
 	bind 0 tag = ip
 	psh tag
-	add [sp] [sp] !64
+	add [sp] [sp] !32
 	psh fp
 	mov fp sp
 	jmp symbol
-}
-
-bind 1 comptime +body:\{...\} {
-	comp
-		body
-		mov r0 !1
-		int
-	run
 }
 
 bind 1 def +name +args:{+arg %} +body:\= ... \; { 
@@ -102,7 +102,7 @@ def clear_screen =
 	mul r1 r1 !4
 
 	bind 0 loop = ip
-		mov [r0] !128 
+		mov [r0] !1000000000
 		add r0 r0 !1
 
 		cmp r0 r1
