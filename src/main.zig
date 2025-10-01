@@ -29,7 +29,6 @@ const VM = struct {
 	mem: [total_mem_size]u8,
 	words: []align(1) u64,
 	half_words: []align(1) u32,
-	quarter_words: []align(1) u16,
 	r0: u64,
 	r1: u64,
 	r2: u64,
@@ -42,7 +41,6 @@ const VM = struct {
 			.mem=undefined,
 			.words=undefined,
 			.half_words=undefined,
-			.quarter_words=undefined,
 			.r0=main_size,
 			.r1=main_size+1*8,
 			.r2=main_size+2*8,
@@ -228,13 +226,13 @@ const TOKEN = enum {
 	OPTIONAL,
 	UNIQUE,
 	HOIST,
-	MOV,
 	LIT,
 	EQUAL,
-	ADD, SUB, MUL, DIV, CMP,
-	JMP,
-	JLT, JGT, JLE, JGE,
-	JZ, JNZ, JEQ, JNE,
+	MOV, MOVL, MOVH,
+	ADD, SUB, MUL, DIV, MOD,
+	AND, OR, XOR, NOT, COM,
+	CMP, JMP,
+	JLT, JGT, JLE, JGE, JEQ, JNE,
 	INT,
 	R0, R1, R2, R3, IP,
 	SPACE, NEW_LINE, TAB, CONCAT,
@@ -408,6 +406,8 @@ pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) P
 	token_map.put("comp", .COMP_START) catch unreachable;
 	token_map.put("run", .COMP_END) catch unreachable;
 	token_map.put("mov", .MOV) catch unreachable;
+	token_map.put("movl", .MOVL) catch unreachable;
+	token_map.put("movh", .MOVH) catch unreachable;
 	token_map.put("add", .ADD) catch unreachable;
 	token_map.put("sub", .SUB) catch unreachable;
 	token_map.put("mul", .MUL) catch unreachable;
@@ -418,8 +418,6 @@ pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) P
 	token_map.put("jgt", .JGT) catch unreachable;
 	token_map.put("jle", .JLE) catch unreachable;
 	token_map.put("jge", .JGE) catch unreachable;
-	token_map.put("jz", .JZ) catch unreachable;
-	token_map.put("jnz", .JNZ) catch unreachable;
 	token_map.put("jeq", .JEQ) catch unreachable;
 	token_map.put("jne", .JNE) catch unreachable;
 	token_map.put("int", .INT) catch unreachable;
@@ -1868,7 +1866,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					const is_ip = tokens.items[token_index.*];
 					if (is_ip.tag == .IP){
 						token_index.* += 1;
-						labels.put(name.text, i+start_ip)
+						labels.put(name.text, (i/4)+(start_ip/4))
 							catch unreachable;
 						continue;
 					}
@@ -1995,26 +1993,6 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 						}
 					};
 				},
-				.JNZ => {
-					op = Instruction{
-						.tag=.jnz_i,
-						.data=.{
-							.jump=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.JZ => {
-					op = Instruction{
-						.tag=.jz_i,
-						.data=.{
-							.jump=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
 				.JLE => {
 					op = Instruction{
 						.tag=.jle_i,
@@ -2076,6 +2054,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					const dest = reduce_location(&inst.data.move.dest);
 					const src = reduce_location(&inst.data.move.src);
 					reduce_binary_operator(@intFromEnum(inst.tag), data, &i, dest, src);
+					store_u32(data, i, 0);
+					i += 4;
 					write_location(data, &i, dest);
 					write_location(data, &i, src);
 				},
@@ -2092,28 +2072,34 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					const left = reduce_location(&inst.data.compare.left);
 					const right = reduce_location(&inst.data.compare.right);
 					reduce_binary_operator(@intFromEnum(inst.tag), data, &i, left, right);
+					store_u32(data, i, 0);
+					i += 4;
 					write_location(data, &i, left);
 					write_location(data, &i, right);
 				},
 				.jump => {
 					const dest = reduce_location(&inst.data.jump.dest);
 					if (dest == .immediate){
-						data[i] = @intFromEnum(inst.tag);
-						i += 1;
+						store_u32(data, i, @intFromEnum(inst.tag));
+						i += 4;
 					}
 					else if (dest == .literal){
-						data[i] = @intFromEnum(inst.tag)+1;
-						i += 1;
+						store_u32(data, i, @intFromEnum(inst.tag)+1);
+						i += 4;
 					}
 					else if (dest == .dereference){
-						data[i] = @intFromEnum(inst.tag)+2;
-						i += 1;
+						store_u32(data, i, @intFromEnum(inst.tag)+2);
+						i += 4;
 					}
+					store_u32(data, i, 0);
+					i += 4;
+					store_u32(data, i, 0);
+					i += 4;
 					write_location(data, &i, dest);
 				},
 				.interrupt => {
-					data[i] = @intFromEnum(inst.tag);
-					i += 1;
+					store_u32(data, i, @intFromEnum(inst.tag));
+					i += 16;
 				}
 			}
 			if (debug){
@@ -2400,6 +2386,11 @@ pub fn load_u64(addr: u64) u64 {
     return @bitCast(tmp);	
 }
 
+pub fn store_u32(data: []u8, addr: u64, val: u32) void {
+	const bytes: [4]u8 = @bitCast(val);
+    @memcpy(data[addr .. addr + 4], &bytes);	
+}
+
 pub fn store_u64(addr: u64, val: u64) void {
 	const bytes: [8]u8 = @bitCast(val);
     @memcpy(vm.mem[addr .. addr + 8], &bytes);	
@@ -2485,8 +2476,6 @@ const Opcode = enum(u8) {
 	jmp_i, jmp_l, jmp_d,
 	jne_i, jne_l, jne_d,
 	jeq_i, jeq_l, jeq_d,
-	jnz_i, jnz_l, jnz_d,
-	jz_i, jz_l, jz_d,
 	jle_i, jle_l, jle_d,
 	jlt_i, jlt_l, jlt_d,
 	jge_i, jge_l, jge_d,
@@ -2500,17 +2489,16 @@ const OpBytesFn = *const fn (*align(1) u64) RuntimeError!bool;
 pub fn interpret(start:u64) RuntimeError!void {
 	vm.words = std.mem.bytesAsSlice(u64, vm.mem[0..]);
 	vm.half_words = std.mem.bytesAsSlice(u32, vm.mem[0..]);
-	vm.quarter_words = std.mem.bytesAsSlice(u16, vm.mem[0..]);
-	const ip: *align(1) u64= &vm.words[vm.ip/8];
-	ip.* = start;
-	const ops: [154]OpBytesFn = .{
+	const ip = &vm.words[vm.ip/8];
+	ip.* = start/4;
+	const ops: [148]OpBytesFn = .{
 		mov_ii_bytes, mov_il_bytes, mov_id_bytes, mov_li_bytes, mov_ll_bytes, mov_ld_bytes, mov_di_bytes, mov_dl_bytes, mov_dd_bytes,
 		add_iii_bytes, add_iil_bytes, add_iid_bytes, add_ili_bytes, add_ill_bytes, add_ild_bytes, add_idi_bytes, add_idl_bytes, add_idd_bytes, add_lii_bytes, add_lil_bytes, add_lid_bytes, add_lli_bytes, add_lll_bytes, add_lld_bytes, add_ldi_bytes, add_ldl_bytes, add_ldd_bytes, add_dii_bytes, add_dil_bytes, add_did_bytes, add_dli_bytes, add_dll_bytes, add_dld_bytes, add_ddi_bytes, add_ddl_bytes, add_ddd_bytes,
 		sub_iii_bytes, sub_iil_bytes, sub_iid_bytes, sub_ili_bytes, sub_ill_bytes, sub_ild_bytes, sub_idi_bytes, sub_idl_bytes, sub_idd_bytes, sub_lii_bytes, sub_lil_bytes, sub_lid_bytes, sub_lli_bytes, sub_lll_bytes, sub_lld_bytes, sub_ldi_bytes, sub_ldl_bytes, sub_ldd_bytes, sub_dii_bytes, sub_dil_bytes, sub_did_bytes, sub_dli_bytes, sub_dll_bytes, sub_dld_bytes, sub_ddi_bytes, sub_ddl_bytes, sub_ddd_bytes,
 		mul_iii_bytes, mul_iil_bytes, mul_iid_bytes, mul_ili_bytes, mul_ill_bytes, mul_ild_bytes, mul_idi_bytes, mul_idl_bytes, mul_idd_bytes, mul_lii_bytes, mul_lil_bytes, mul_lid_bytes, mul_lli_bytes, mul_lll_bytes, mul_lld_bytes, mul_ldi_bytes, mul_ldl_bytes, mul_ldd_bytes, mul_dii_bytes, mul_dil_bytes, mul_did_bytes, mul_dli_bytes, mul_dll_bytes, mul_dld_bytes, mul_ddi_bytes, mul_ddl_bytes, mul_ddd_bytes,
 		div_iii_bytes, div_iil_bytes, div_iid_bytes, div_ili_bytes, div_ill_bytes, div_ild_bytes, div_idi_bytes, div_idl_bytes, div_idd_bytes, div_lii_bytes, div_lil_bytes, div_lid_bytes, div_lli_bytes, div_lll_bytes, div_lld_bytes, div_ldi_bytes, div_ldl_bytes, div_ldd_bytes, div_dii_bytes, div_dil_bytes, div_did_bytes, div_dli_bytes, div_dll_bytes, div_dld_bytes, div_ddi_bytes, div_ddl_bytes, div_ddd_bytes,
 		cmp_ii_bytes, cmp_il_bytes, cmp_id_bytes, cmp_li_bytes, cmp_ll_bytes, cmp_ld_bytes, cmp_di_bytes, cmp_dl_bytes, cmp_dd_bytes,
-		jmp_i_bytes, jmp_l_bytes, jmp_d_bytes, jne_i_bytes, jne_l_bytes, jne_d_bytes, jeq_i_bytes, jeq_l_bytes, jeq_d_bytes, jnz_i_bytes, jnz_l_bytes, jnz_d_bytes, jz_i_bytes, jz_l_bytes, jz_d_bytes, jle_i_bytes, jle_l_bytes, jle_d_bytes, jlt_i_bytes, jlt_l_bytes, jlt_d_bytes, jge_i_bytes, jge_l_bytes, jge_d_bytes, jgt_i_bytes, jgt_l_bytes, jgt_d_bytes,
+		jmp_i_bytes, jmp_l_bytes, jmp_d_bytes, jne_i_bytes, jne_l_bytes, jne_d_bytes, jeq_i_bytes, jeq_l_bytes, jeq_d_bytes, jle_i_bytes, jle_l_bytes, jle_d_bytes, jlt_i_bytes, jlt_l_bytes, jlt_d_bytes, jge_i_bytes, jge_l_bytes, jge_d_bytes, jgt_i_bytes, jgt_l_bytes, jgt_d_bytes,
 		int_bytes
 	};
 	var running = true;
@@ -2526,1562 +2514,1951 @@ pub fn interpret(start:u64) RuntimeError!void {
 			var buffer: [1]u8 = undefined;
 			_ = stdin.read(&buffer) catch unreachable;
 		}
-		running = try ops[vm.mem[ip.*]](ip);
+		running = try ops[vm.half_words[ip.*]](ip);
 	}
 }
 
 pub fn mov_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
 	const p = ip.*;
-	ip.* += 17;
-	store_u64(load_u64(p+1), load_u64(load_u64(p+9)));
+	ip.* += 4;
+	const dest = vm.half_words[p+2];
+	const src_name = vm.half_words[p+3];
+	const src = load_u64(src_name);
+	store_u64(dest, src);
 	return true;
 }
 
 pub fn mov_il_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 17;
-	store_u64(load_u64(p+1), load_u64(p+9));
+	ip.* += 4;
+	const dest = vm.half_words[p+2];
+	const src = vm.half_words[p+3];
+	store_u64(dest, src);
 	return true;
 }
 
 pub fn mov_id_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 17;
-	store_u64(load_u64(p+1), load_u64(load_u64(load_u64(p+9))));
+	ip.* += 4;
+	const dest = vm.half_words[p+2];
+	const src_name = vm.half_words[p+3];
+	const src_imm = load_u64(src_name);
+	const src = load_u64(src_imm);
+	store_u64(dest, src);
 	return true;
 }
 
 pub fn mov_li_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 17;
-	store_u64(load_u64(p+1), load_u64(load_u64(p+9)));
+	ip.* += 4;
+	const dest = vm.half_words[p+2];
+	const src_name = vm.half_words[p+3];
+	const src = load_u64(src_name);
+	store_u64(dest, src);
 	return true;
 }
 
 pub fn mov_ll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 17;
-	store_u64(load_u64(p+1), load_u64(p+9));
+	ip.* += 4;
+	const dest = vm.half_words[p+2];
+	const src = vm.half_words[p+3];
+	store_u64(dest, src);
 	return true;
 }
 
 pub fn mov_ld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 17;
-	store_u64(load_u64(p+1), load_u64(load_u64(load_u64(p+9))));
+	ip.* += 4;
+	const dest = vm.half_words[p+2];
+	const src_name = vm.half_words[p+3];
+	const src_imm = load_u64(src_name);
+	const src = load_u64(src_imm);
+	store_u64(dest, src);
 	return true;
 }
 
 pub fn mov_di_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 17;
-	store_u64(load_u64(load_u64(p+1)), load_u64(load_u64(p+9)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+2];
+	const dest = load_u64(dest_name);
+	const src_name = vm.half_words[p+3];
+	const src = load_u64(src_name);
+	store_u64(dest, src);
 	return true;
 }
 
 pub fn mov_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 17;
-	store_u64(load_u64(load_u64(p+1)), load_u64(p+9));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+2];
+	const dest = load_u64(dest_name);
+	const src = vm.half_words[p+3];
+	store_u64(dest, src);
 	return true;
 }
 
 pub fn mov_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 17;
-	store_u64(load_u64(load_u64(p+1)), load_u64(load_u64(load_u64(p+9))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+2];
+	const dest = load_u64(dest_name);
+	const src_name = vm.half_words[p+3];
+	const src_imm = load_u64(src_name);
+	const src = load_u64(src_imm);
+	store_u64(dest, src);
 	return true;
 }
 
 pub fn add_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) +
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) +
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) +
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) +
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) +
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) +
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) +
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) +
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) +
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) +
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) +
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) +
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) +
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) +
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) +
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) +
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) +
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) +
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) +
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) +
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) +
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) +
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) +
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) +
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) +
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) +
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn add_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) +
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a + b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) -
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) -
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) -
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) -
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) -
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) -
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) -
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) -
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) -
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) -
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) -
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) -
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) -
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) -
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) -
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) -
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) -
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) -
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) -
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) -
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) -
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) -
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) -
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) -
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) -
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) -
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn sub_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) -
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a - b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) *
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) *
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) *
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) *
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) *
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) *
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) *
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) *
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) *
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) *
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) *
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) *
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) *
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) *
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) *
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) *
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) *
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) *
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) *
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) *
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) *
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) *
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) *
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) *
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) *
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) *
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn mul_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) *
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a * b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) /
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) /
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) /
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) /
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) /
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) /
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) /
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) /
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) /
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) /
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) /
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(p+9)) /
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) /
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) /
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(p+9) /
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) /
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) /
-		load_u64(p+17));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(p+1),
-		load_u64(load_u64(load_u64(p+9))) /
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest = vm.half_words[p+1];
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) /
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b = load_u64(b_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) /
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(p+9)) /
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) /
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b = load_u64(b_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) /
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(p+9) /
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const b_imm = load_u64(b_name);
+	const b = load_u64(b_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) /
-		load_u64(load_u64(p+17)));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_name);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) /
-		load_u64(p+17));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const a = load_u64(a_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn div_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
-	ip.* += 25;
-	store_u64(
-		load_u64(load_u64(p+1)),
-		load_u64(load_u64(load_u64(p+9))) /
-		load_u64(load_u64(load_u64(p+17))));
+	ip.* += 4;
+	const dest_name = vm.half_words[p+1];
+	const dest = load_u64(dest_name);
+	const a_name = vm.half_words[p+2];
+	const b_name = vm.half_words[p+3];
+	const a_imm = load_u64(a_name);
+	const b_imm = load_u64(b_name);
+	const a = load_u64(a_imm);
+	const b = load_u64(b_imm);
+	const c = a / b;
+	store_u64(dest, c);
 	return true;
 }
 
 pub fn cmp_ii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const left = load_u64(load_u64(ip.*+1));
-	const right = load_u64(load_u64(ip.*+9));
+	const left_name = vm.half_words[ip.*+2];
+	const right_name = vm.half_words[ip.*+3];
+	const left = load_u64(left_name);
+	const right = load_u64(right_name);
 	if (left > right){
-		store_u64(vm.sr, 1);
+		vm.mem[vm.sr] = 1;
 	}
 	else if (left < right){
-		store_u64(vm.sr, 2);
+		vm.mem[vm.sr] = 2;
 	}
 	else {
-		store_u64(vm.sr, 0);
+		vm.mem[vm.sr] = 0;
 	}
-	ip.* += 17;
+	ip.* += 4;
 	return true;
 }
 
 pub fn cmp_il_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const left = load_u64(load_u64(ip.*+1));
-	const right = load_u64(ip.*+9);
+	const left = vm.half_words[ip.*+2];
+	const right_name = vm.half_words[ip.*+3];
+	const right = load_u64(right_name);
 	if (left > right){
-		store_u64(vm.sr, 1);
+		vm.mem[vm.sr] = 1;
 	}
 	else if (left < right){
-		store_u64(vm.sr, 2);
+		vm.mem[vm.sr] = 2;
 	}
 	else {
-		store_u64(vm.sr, 0);
+		vm.mem[vm.sr] = 0;
 	}
-	ip.* += 17;
+	ip.* += 4;
 	return true;
 }
 
 pub fn cmp_id_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const left = load_u64(load_u64(ip.*+1));
-	const right = load_u64(load_u64(load_u64(ip.*+9)));
+	const left_name = vm.half_words[ip.*+2];
+	const left = load_u64(left_name);
+	const right_name = vm.half_words[ip.*+3];
+	const right_imm = load_u64(right_name);
+	const right = load_u64(right_imm);
 	if (left > right){
-		store_u64(vm.sr, 1);
+		vm.mem[vm.sr] = 1;
 	}
 	else if (left < right){
-		store_u64(vm.sr, 2);
+		vm.mem[vm.sr] = 2;
 	}
 	else {
-		store_u64(vm.sr, 0);
+		vm.mem[vm.sr] = 0;
 	}
-	ip.* += 17;
+	ip.* += 4;
 	return true;
 }
 
 pub fn cmp_li_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const left = load_u64(ip.*+1);
-	const right = load_u64(load_u64(ip.*+9));
+	const left = vm.half_words[ip.*+2];
+	const right_name = vm.half_words[ip.*+3];
+	const right = load_u64(right_name);
 	if (left > right){
-		store_u64(vm.sr, 1);
+		vm.mem[vm.sr] = 1;
 	}
 	else if (left < right){
-		store_u64(vm.sr, 2);
+		vm.mem[vm.sr] = 2;
 	}
 	else {
-		store_u64(vm.sr, 0);
+		vm.mem[vm.sr] = 0;
 	}
-	ip.* += 17;
+	ip.* += 4;
 	return true;
 }
 
 pub fn cmp_ll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const left = load_u64(ip.*+1);
-	const right = load_u64(ip.*+9);
+	const left = vm.half_words[ip.*+2];
+	const right = vm.half_words[ip.*+3];
 	if (left > right){
-		store_u64(vm.sr, 1);
+		vm.mem[vm.sr] = 1;
 	}
 	else if (left < right){
-		store_u64(vm.sr, 2);
+		vm.mem[vm.sr] = 2;
 	}
 	else {
-		store_u64(vm.sr, 0);
+		vm.mem[vm.sr] = 0;
 	}
-	ip.* += 17;
+	ip.* += 4;
 	return true;
 }
 
 pub fn cmp_ld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const left = load_u64(ip.*+1);
-	const right = load_u64(load_u64(load_u64(ip.*+9)));
+	const left = vm.half_words[ip.*+2];
+	const right_name = vm.half_words[ip.*+3];
+	const right_imm = load_u64(right_name);
+	const right = load_u64(right_imm);
 	if (left > right){
-		store_u64(vm.sr, 1);
+		vm.mem[vm.sr] = 1;
 	}
 	else if (left < right){
-		store_u64(vm.sr, 2);
+		vm.mem[vm.sr] = 2;
 	}
 	else {
-		store_u64(vm.sr, 0);
+		vm.mem[vm.sr] = 0;
 	}
-	ip.* += 17;
+	ip.* += 4;
 	return true;
 }
 
 pub fn cmp_di_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const left = load_u64(load_u64(load_u64(ip.*+1)));
-	const right = load_u64(load_u64(ip.*+9));
+	const left_name = vm.half_words[ip.*+2];
+	const left_imm = load_u64(left_name);
+	const left = load_u64(left_imm);
+	const right_name = vm.half_words[ip.*+3];
+	const right = load_u64(right_name);
 	if (left > right){
-		store_u64(vm.sr, 1);
+		vm.mem[vm.sr] = 1;
 	}
 	else if (left < right){
-		store_u64(vm.sr, 2);
+		vm.mem[vm.sr] = 2;
 	}
 	else {
-		store_u64(vm.sr, 0);
+		vm.mem[vm.sr] = 0;
 	}
-	ip.* += 17;
+	ip.* += 4;
 	return true;
 }
 
 pub fn cmp_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const left = load_u64(load_u64(load_u64(ip.*+1)));
-	const right = load_u64(ip.*+9);
+	const left_name = vm.half_words[ip.*+2];
+	const left_imm = load_u64(left_name);
+	const left = load_u64(left_imm);
+	const right = vm.half_words[ip.*+3];
 	if (left > right){
-		store_u64(vm.sr, 1);
+		vm.mem[vm.sr] = 1;
 	}
 	else if (left < right){
-		store_u64(vm.sr, 2);
+		vm.mem[vm.sr] = 2;
 	}
 	else {
-		store_u64(vm.sr, 0);
+		vm.mem[vm.sr] = 0;
 	}
-	ip.* += 17;
+	ip.* += 4;
 	return true;
 }
 
 pub fn cmp_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const left = load_u64(load_u64(load_u64(ip.*+1)));
-	const right = load_u64(load_u64(load_u64(ip.*+9)));
+	const left_name = vm.half_words[ip.*+2];
+	const left_imm = load_u64(left_name);
+	const left = load_u64(left_imm);
+	const right_name = vm.half_words[ip.*+3];
+	const right_imm = load_u64(right_name);
+	const right = load_u64(right_imm);
 	if (left > right){
-		store_u64(vm.sr, 1);
+		vm.mem[vm.sr] = 1;
 	}
 	else if (left < right){
-		store_u64(vm.sr, 2);
+		vm.mem[vm.sr] = 2;
 	}
 	else {
-		store_u64(vm.sr, 0);
+		vm.mem[vm.sr] = 0;
 	}
-	ip.* += 17;
+	ip.* += 4;
 	return true;
 }
 
 pub fn jmp_i_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const dest = load_u64(load_u64(ip.*+1));
+	const label = vm.half_words[ip.*+3];
+	const dest = load_u64(label);
 	ip.* = dest;
 	return true;
 }
 
 pub fn jmp_l_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const dest = load_u64(ip.*+1);
-	ip.* = dest;
+	const label = vm.half_words[ip.*+3];
+	ip.* = label;
 	return true;
 }
 
 pub fn jmp_d_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const dest = load_u64(load_u64(load_u64(ip.*+1)));
+	const label = vm.half_words[ip.*+3];
+	const label_imm = load_u64(label);
+	const dest = load_u64(label_imm);
 	ip.* = dest;
 	return true;
 }
 
 pub fn jne_i_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 0){
-		ip.* = load_u64(load_u64(ip.*+1));
+	if (vm.mem[vm.sr] != 0){
+		const label = vm.half_words[ip.*+3];
+		const dest = load_u64(label);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jne_l_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 0){
-		ip.* = load_u64(ip.*+1);
+	if (vm.mem[vm.sr] != 0){
+		const label = vm.half_words[ip.*+3];
+		ip.* = label;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jne_d_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 0){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	if (vm.mem[vm.sr] != 0){
+		const label = vm.half_words[ip.*+3];
+		const dest_imm = load_u64(label);
+		const dest = load_u64(dest_imm);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jeq_i_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(ip.*+1));
+	if (vm.mem[vm.sr] == 0){
+		const label = vm.half_words[ip.*+3];
+		const dest = load_u64(label);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jeq_l_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(ip.*+1);
+	if (vm.mem[vm.sr] == 0){
+		const label = vm.half_words[ip.*+3];
+		ip.* = label;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jeq_d_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	if (vm.mem[vm.sr] == 0){
+		const label = vm.half_words[ip.*+3];
+		const dest_imm = load_u64(label);
+		const dest = load_u64(dest_imm);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
-	}
-	return true;
-}
-
-pub fn jnz_i_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 0){
-		ip.* = load_u64(load_u64(ip.*+1));
-	}
-	else {
-		ip.* += 9;
-	}
-	return true;
-}
-
-pub fn jnz_l_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 0){
-		ip.* = load_u64(ip.*+1);
-	}
-	else {
-		ip.* += 9;
-	}
-	return true;
-}
-
-pub fn jnz_d_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 0){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
-	}
-	else {
-		ip.* += 9;
-	}
-	return true;
-}
-
-pub fn jz_i_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(ip.*+1));
-	}
-	else {
-		ip.* += 9;
-	}
-	return true;
-}
-
-pub fn jz_l_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(ip.*+1);
-	}
-	else {
-		ip.* += 9;
-	}
-	return true;
-}
-
-pub fn jz_d_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 0){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
-	}
-	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jgt_i_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 1){
-		ip.* = load_u64(load_u64(ip.*+1));
+	if (vm.mem[vm.sr] == 1){
+		const label = vm.half_words[ip.*+3];
+		const dest = load_u64(label);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jgt_l_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 1){
-		ip.* = load_u64(ip.*+1);
+	if (vm.mem[vm.sr] == 1){
+		const label = vm.half_words[ip.*+3];
+		ip.* = label;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jgt_d_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 1){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	if (vm.mem[vm.sr] == 1){
+		const label = vm.half_words[ip.*+3];
+		const dest_imm = load_u64(label);
+		const dest = load_u64(dest_imm);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jge_i_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 2){
-		ip.* = load_u64(load_u64(ip.*+1));
+	if (vm.mem[vm.sr] != 2){
+		const label = vm.half_words[ip.*+3];
+		const dest = load_u64(label);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jge_l_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 2){
-		ip.* = load_u64(ip.*+1);
+	if (vm.mem[vm.sr] != 2){
+		const label = vm.half_words[ip.*+3];
+		ip.* = label;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jge_d_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 2){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	if (vm.mem[vm.sr] != 2){
+		const label = vm.half_words[ip.*+3];
+		const dest_imm = load_u64(label);
+		const dest = load_u64(dest_imm);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jlt_i_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 2){
-		ip.* = load_u64(load_u64(ip.*+1));
+	if (vm.mem[vm.sr] == 2){
+		const label = vm.half_words[ip.*+3];
+		const dest = load_u64(label);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jlt_l_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 2){
-		ip.* = load_u64(ip.*+1);
+	if (vm.mem[vm.sr] == 2){
+		const label = vm.half_words[ip.*+3];
+		ip.* = label;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jlt_d_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) == 2){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	if (vm.mem[vm.sr] == 2){
+		const label = vm.half_words[ip.*+3];
+		const dest_imm = load_u64(label);
+		const dest = load_u64(dest_imm);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jle_i_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 1){
-		ip.* = load_u64(load_u64(ip.*+1));
+	if (vm.mem[vm.sr] != 1){
+		const label = vm.half_words[ip.*+3];
+		const dest = load_u64(label);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jle_l_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 1){
-		ip.* = load_u64(ip.*+1);
+	if (vm.mem[vm.sr] != 1){
+		const label = vm.half_words[ip.*+3];
+		ip.* = label;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn jle_d_bytes(ip: *align(1) u64) RuntimeError!bool {
-	if (load_u64(vm.sr) != 1){
-		ip.* = load_u64(load_u64(load_u64(ip.*+1)));
+	if (vm.mem[vm.sr] != 1){
+		const label = vm.half_words[ip.*+3];
+		const dest_imm = load_u64(label);
+		const dest = load_u64(dest_imm);
+		ip.* = dest;
 	}
 	else {
-		ip.* += 9;
+		ip.* += 4;
 	}
 	return true;
 }
 
 pub fn int_bytes(ip: *align(1) u64) RuntimeError!bool {
-	ip.* += 1;
+	ip.* += 4;
 	if (vm.mem[vm.r0] == 0){
 		rl.updateTexture(frame_buffer_texture, &vm.mem[0]);
 		rl.beginDrawing();
 		rl.drawTexture(frame_buffer_texture, 0, 0, .white);
 		rl.endDrawing();
+		const fps = rl.getFPS();
+		std.debug.print("{}\n", .{fps});
 		return true;
 	}
 	if (vm.mem[vm.r0] == 1){
@@ -4149,44 +4526,44 @@ pub fn reduce_ternary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Lo
 pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location) void {
 	if (a == .immediate){
 		if (b == .immediate){
-			data[i.*] = seed;
-			i.* += 1;
+			store_u32(data, i.*, seed);
+			i.* += 4;
 		}
 		else if (b == .literal){
-			data[i.*] = seed + 1;
-			i.* += 1;
+			store_u32(data, i.*, seed+1);
+			i.* += 4;
 		}
 		else if (b == .dereference){
-			data[i.*] = seed+2;
-			i.* += 1;
+			store_u32(data, i.*, seed+2);
+			i.* += 4;
 		}
 	}
 	else if (a == .literal){
 		if (b == .immediate){
-			data[i.*] = seed+3;
-			i.* += 1;
+			store_u32(data, i.*, seed+3);
+			i.* += 4;
 		}
 		else if (b == .literal){
-			data[i.*] = seed+4;
-			i.* += 1;
+			store_u32(data, i.*, seed+4);
+			i.* += 4;
 		}
 		else if (b == .dereference){
-			data[i.*] = seed+5;
-			i.* += 1;
+			store_u32(data, i.*, seed+5);
+			i.* += 4;
 		}
 	}
 	else if (a == .dereference){
 		if (b == .immediate){
-			data[i.*] = seed+6;
-			i.* += 1;
+			store_u32(data, i.*, seed+6);
+			i.* += 4;
 		}
 		else if (b == .literal){
-			data[i.*] = seed+7;
-			i.* += 1;
+			store_u32(data, i.*, seed+7);
+			i.* += 4;
 		}
 		else if (b == .dereference){
-			data[i.*] = seed+8;
-			i.* += 1;
+			store_u32(data, i.*, seed+8);
+			i.* += 4;
 		}
 	}
 }
@@ -4194,14 +4571,12 @@ pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Loc
 pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 	switch(loc){
 		.immediate => {
-			const bytes:[8]u8 = @bitCast(loc.immediate);
-			@memcpy(data[i.* .. i.*+8], &bytes);
-			i.* += 8;
+			store_u32(data, i.*, @truncate(loc.immediate));
+			i.* += 4;
 		},
 		.literal => {
-			const bytes:[8]u8 = @bitCast(loc.literal);
-			@memcpy(data[i.* .. i.*+8], &bytes);
-			i.* += 8;
+			store_u32(data, i.*, @truncate(loc.literal));
+			i.* += 4;
 		},
 		.dereference => {
 			write_location(data, i, loc.dereference.*);
@@ -4221,3 +4596,9 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 	// interrupts: write n to file, read n from file, get input from keyboard/mouse, send info to screen
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
+
+//TODO switch ip to 16 byte
+
+//TODO separate comptime and runbind from parse, to make sure that the tool can be used with other languages while still using comptime and runbinds, use a different setting
+//TODO cli
+//TODO machine config

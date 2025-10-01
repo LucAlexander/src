@@ -47,7 +47,7 @@ bind 1 ret {
 bind 1 ( +symbol ) {
 	bind 0 tag = ip
 	psh tag
-	add [sp] [sp] !135
+	add [sp] [sp] !64
 	psh fp
 	mov fp sp
 	jmp symbol
@@ -112,7 +112,7 @@ def clear_screen =
 	bind 0 end = ip
 	mov r0 !0
 	int
-	//jmp clear_screen
+	jmp clear_screen
 ;
 
 def main = (clear_screen) ;
