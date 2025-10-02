@@ -73,10 +73,62 @@ pub fn main() !void {
 	persistent.put("fbh", frame_buffer_h) catch unreachable;
 	persistent.put("mtp", main_size) catch unreachable;
 	const allocator = std.heap.page_allocator;
-	var infile = try std.fs.cwd().openFile("red.src", .{});
+	const args = try std.process.argsAlloc(allocator);
+	switch (args.len){
+		2 => {
+			const filename = args[1];
+			if (std.mem.eql(u8, filename, "-h")){
+				std.debug.print("Help Menu\n", .{});
+				std.debug.print("    src -h                    : show this message\n", .{});
+				std.debug.print("    src infile.src            : compile and run src program\n", .{});
+				std.debug.print("    src infile.src -o out.bin : compile and src program\n", .{});
+				std.debug.print("    src -i infile.bin         : run compiled src program\n", .{});
+				return;
+			}
+			compile_and_run(filename);
+		},
+		3 => {
+			const i = args[1];
+			if (!std.mem.eql(u8, i, "-i")){
+				std.debug.print("Expected arg 1 as -i for specifying input binary file, found {s}\n", .{i});
+			}
+			const filename = args[2];
+			run_file(filename);
+		},
+		4 => {
+			const infile = args[1];
+			const o = args[2];
+			const outfile = args[3];
+			if (!std.mem.eql(u8, o, "-o")){
+				std.debug.print("Expected arg 2 as -o for specifying output binary file, found {s}\n", .{o});
+				return;
+			}
+			compile_and_write(infile, outfile);
+		},
+		1 => {
+			std.debug.print("Provide args, provide -h for help\n", .{});
+		},
+		else => {
+			std.debug.print("Incorrect number of args, provide -h for help\n", .{});
+		}
+	}
+}
+
+pub fn compile_and_run(filename: []u8) void {
+	const allocator = std.heap.page_allocator;
+	var infile = std.fs.cwd().openFile(filename, .{}) catch {
+		std.debug.print("File not found: {s}\n", .{filename});
+		return;
+	};
 	defer infile.close();
-	const stat = try infile.stat();
-	const contents = try infile.readToEndAlloc(allocator, stat.size+1);
+	const stat = infile.stat() catch {
+		std.debug.print("Errored file stat: {s}\n", .{filename});
+		return;
+	};
+	const contents = infile.readToEndAlloc(allocator, stat.size+1) catch {
+		std.debug.print("Error reading file: {s}\n", .{filename});
+		return;
+	};
 	defer allocator.free(contents);
 	var main_mem = std.heap.ArenaAllocator.init(allocator);
 	defer main_mem.deinit();
@@ -88,11 +140,88 @@ pub fn main() !void {
 	}
 	var binds = Buffer(Bind).init(mem);
 	rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
-	frame_buffer_texture = try rl.loadTextureFromImage(frame_buffer_image);
+	frame_buffer_texture = rl.loadTextureFromImage(frame_buffer_image) catch {
+		std.debug.print("Error creating texture\n", .{});
+		return;
+	};
 	_ = metaprogram(&tokens, &binds, &mem, true);
 }
 
-pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool) ?Buffer(Token) {
+pub fn compile_and_write(infilename: []u8, outfilename: []u8) void {
+	const allocator = std.heap.page_allocator;
+	var infile = std.fs.cwd().openFile(infilename, .{}) catch {
+		std.debug.print("File not found: {s}\n", .{infilename});
+		return;
+	};
+	defer infile.close();
+	const stat = infile.stat() catch {
+		std.debug.print("Errored file stat: {s}\n", .{infilename});
+		return;
+	};
+	const contents = infile.readToEndAlloc(allocator, stat.size+1) catch {
+		std.debug.print("Error reading file: {s}\n", .{infilename});
+		return;
+	};
+	defer allocator.free(contents);
+	var main_mem = std.heap.ArenaAllocator.init(allocator);
+	defer main_mem.deinit();
+	const mem = main_mem.allocator();
+	const tokens = tokenize(&mem, contents);
+	show_tokens(tokens);
+	if (debug){
+		std.debug.print("initial------------------------------\n", .{});
+	}
+	var binds = Buffer(Bind).init(mem);
+	rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
+	frame_buffer_texture = rl.loadTextureFromImage(frame_buffer_image) catch {
+		std.debug.print("Error creating texture\n", .{});
+		return;
+	};
+	const program_len = metaprogram(&tokens, &binds, &mem, false);
+	if (program_len) |len| {
+		var outfile = std.fs.cwd().createFile(outfilename, .{.truncate=true}) catch {
+			std.debug.print("Error creating file: {s}\n", .{outfilename});
+			return;
+		};
+		defer outfile.close();
+		outfile.writeAll(vm.mem[start_ip..start_ip+len]) catch {
+			std.debug.print("Error writing to file: {s}\n", .{outfilename});
+			return;
+		};
+	}
+}
+
+pub fn run_file(infilename: []u8) void {
+	const allocator = std.heap.page_allocator;
+	var infile = std.fs.cwd().openFile(infilename, .{}) catch {
+		std.debug.print("File not found: {s}\n", .{infilename});
+		return;
+	};
+	defer infile.close();
+	const stat = infile.stat() catch {
+		std.debug.print("Errored file stat: {s}\n", .{infilename});
+		return;
+	};
+	const contents = infile.readToEndAlloc(allocator, stat.size+1) catch {
+		std.debug.print("Error reading file: {s}\n", .{infilename});
+		return;
+	};
+	defer allocator.free(contents);
+	for (contents, 0..) |byte, i| {
+		vm.mem[start_ip+i] = byte;
+	}
+	rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
+	frame_buffer_texture = rl.loadTextureFromImage(frame_buffer_image) catch {
+		std.debug.print("Error creating texture\n", .{});
+		return;
+	};
+	interpret(start_ip) catch |err| {
+		std.debug.print("Runtime Error {}\n", .{err});
+		return;
+	};
+}
+
+pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool) ?u64 {
 	const allocator = std.heap.page_allocator;
 	var main_aux = std.heap.ArenaAllocator.init(allocator);
 	var main_txt = std.heap.ArenaAllocator.init(allocator);
@@ -178,16 +307,15 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 		if (concatenated == false){
 			break;
 		}
-
 	}
+	var index:u64 = 0;
+	var runtime = VM.init();
+	const program_len = parse_bytecode(mem, runtime.mem[start_ip..], token_stream, &index, false) catch |err| {
+		std.debug.print("Bytecode Parse Error {}\n", .{err});
+		return null;
+	};
+	vm = runtime;
 	if (run){
-		var index:u64 = 0;
-		var runtime = VM.init();
-		const program_len = parse_bytecode(mem, runtime.mem[frame_buffer..vm.mem.len], token_stream, &index, false) catch |err| {
-			std.debug.print("Bytecode Parse Error {}\n", .{err});
-			return null;
-		};
-		vm = runtime;
 		if (debug){
 			std.debug.print("program length: {}\n", .{program_len});
 			std.debug.print("parsed bytecode--------------------\n", .{});
@@ -197,9 +325,7 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 			return null;
 		};
 	}
-	var stream = Buffer(Token).init(mem.*);
-	stream.appendSlice(token_stream.items) catch unreachable;
-	return stream;
+	return program_len;
 }
 
 const ParseError = error {
@@ -6306,4 +6432,3 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 //TODO separate comptime and runbind from parse, to make sure that the tool can be used with other languages while still using comptime and runbinds, use a different setting
 //TODO cli
 //TODO machine config
-//TODO hex parsing
