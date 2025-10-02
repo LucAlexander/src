@@ -55,7 +55,7 @@ bind 1 ret {
 bind 1 ( +symbol ) {
 	bind 0 tag = ip
 	psh tag
-	add [sp] [sp] !32
+	add [sp] [sp] !20
 	psh fp
 	mov fp sp
 	jmp symbol
@@ -102,8 +102,9 @@ def clear_screen =
 	mul r1 r1 !4
 
 	bind 0 loop = ip
-		mov [r0] !1000000000
-		add r0 r0 !1
+		mov [r0] !ff808080
+		movh [r0] !ff808080
+		add r0 r0 !8
 
 		cmp r0 r1
 		jge end
