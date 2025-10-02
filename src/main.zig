@@ -81,7 +81,8 @@ pub fn main() !void {
 				std.debug.print("Help Menu\n", .{});
 				std.debug.print("    src -h                    : show this message\n", .{});
 				std.debug.print("    src infile.src            : compile and run src program\n", .{});
-				std.debug.print("    src infile.src -o out.bin : compile and src program\n", .{});
+				std.debug.print("    src infile.src -o out.bin : compile src program to binary\n", .{});
+				std.debug.print("    src infile.src -p out.out : compile src program as a plugin\n", .{});
 				std.debug.print("    src -i infile.bin         : run compiled src program\n", .{});
 				return;
 			}
@@ -97,13 +98,17 @@ pub fn main() !void {
 		},
 		4 => {
 			const infile = args[1];
-			const o = args[2];
+			const option = args[2];
 			const outfile = args[3];
-			if (!std.mem.eql(u8, o, "-o")){
-				std.debug.print("Expected arg 2 as -o for specifying output binary file, found {s}\n", .{o});
+			if (std.mem.eql(u8, option, "-p")){
+				compile_and_write(infile, outfile, true);
 				return;
 			}
-			compile_and_write(infile, outfile);
+			if (!std.mem.eql(u8, option, "-o")){
+				std.debug.print("Expected arg 2 as -o for specifying output binary file, found {s}\n", .{option});
+				return;
+			}
+			compile_and_write(infile, outfile, false);
 		},
 		1 => {
 			std.debug.print("Provide args, provide -h for help\n", .{});
@@ -144,10 +149,10 @@ pub fn compile_and_run(filename: []u8) void {
 		std.debug.print("Error creating texture\n", .{});
 		return;
 	};
-	_ = metaprogram(&tokens, &binds, &mem, true);
+	_ = metaprogram(&tokens, &binds, &mem, true, null);
 }
 
-pub fn compile_and_write(infilename: []u8, outfilename: []u8) void {
+pub fn compile_and_write(infilename: []u8, outfilename: []u8, plugin: bool) void {
 	const allocator = std.heap.page_allocator;
 	var infile = std.fs.cwd().openFile(infilename, .{}) catch {
 		std.debug.print("File not found: {s}\n", .{infilename});
@@ -177,7 +182,11 @@ pub fn compile_and_write(infilename: []u8, outfilename: []u8) void {
 		std.debug.print("Error creating texture\n", .{});
 		return;
 	};
-	const program_len = metaprogram(&tokens, &binds, &mem, false);
+	if (plugin){
+		_ = metaprogram(&tokens, &binds, &mem, false, outfilename);
+		return;
+	}
+	const program_len = metaprogram(&tokens, &binds, &mem, false, null);
 	if (program_len) |len| {
 		var outfile = std.fs.cwd().createFile(outfilename, .{.truncate=true}) catch {
 			std.debug.print("Error creating file: {s}\n", .{outfilename});
@@ -221,7 +230,7 @@ pub fn run_file(infilename: []u8) void {
 	};
 }
 
-pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool) ?u64 {
+pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool, headless: ?[]u8) ?u64 {
 	const allocator = std.heap.page_allocator;
 	var main_aux = std.heap.ArenaAllocator.init(allocator);
 	var main_txt = std.heap.ArenaAllocator.init(allocator);
@@ -309,6 +318,28 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 		}
 	}
 	var index:u64 = 0;
+	if (headless) |filename| {
+		const stream = parse_plugin(mem, token_stream, &index, false) catch |err| {
+			std.debug.print("Headless Plugin Parse Error: {} \n", .{err});
+			return null;
+		};
+		var out = std.fs.cwd().createFile(filename, .{.truncate=true}) catch {
+			std.debug.print("Error creating file: {s}\n", .{filename});
+			return null;
+		};
+		defer out.close();
+		for (stream.items) |t| {
+			_ = out.write(t.text) catch {
+				std.debug.print("Error writing to file\n", .{});
+				return null;
+			};
+			_ = out.write(" ") catch {
+				std.debug.print("Error writing to file\n", .{});
+				return null;
+			};
+		}
+		return null;
+	}
 	var runtime = VM.init();
 	const program_len = parse_bytecode(mem, runtime.mem[start_ip..], token_stream, &index, false) catch |err| {
 		std.debug.print("Bytecode Parse Error {}\n", .{err});
@@ -1926,6 +1957,109 @@ const Instruction = struct {
 	},
 	tag: Opcode
 };
+
+pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!Buffer(Token) {
+	try retokenize(mem, tokens);
+	var output = Buffer(Token).init(mem.*);
+	while (token_index.* < tokens.items.len){
+		skip_whitespace(tokens.items, token_index) catch {
+			return output;
+		};
+		if (token_index.* > tokens.items.len){
+			std.debug.print("Expected opcode, found end of file\n", .{});
+			return ParseError.UnexpectedEOF;
+		}
+		const token = tokens.items[token_index.*];
+		token_index.* += 1;
+		switch (token.tag){
+			.COMP_START => {
+				comp_section = true;
+				if (debug){
+					std.debug.print("Entering comp segment\n", .{});
+				}
+				_ = try parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], tokens, token_index, true);
+				if (debug){
+					std.debug.print("Parsed comp segment\n", .{});
+				}
+				interpret(start_ip) catch |err| {
+					std.debug.print("Runtime Error {}\n", .{err});
+					return ParseError.BrokenComptime;
+				};
+				if (debug){
+					std.debug.print("Exiting comp segment\n", .{});
+				}
+				comp_section = false;
+				continue;
+			},
+			.COMP_END => {
+				if (comp == false){
+					continue;
+				}
+				return output;
+			},
+			.BIND => {
+				skip_whitespace(tokens.items, token_index) catch {
+					return output;
+				};
+				token_index.* += 1;
+				skip_whitespace(tokens.items, token_index) catch {
+					return output;
+				};
+				const name = tokens.items[token_index.*];
+				token_index.* += 1;
+				if (name.tag != .IDENTIFIER){
+					std.debug.print("Expected name for transfer bind, found {s}\n", .{name.text});
+					return ParseError.UnexpectedToken;
+				}
+				skip_whitespace(tokens.items, token_index) catch {
+					return output;
+				};
+				if (tokens.items[token_index.*].tag != .EQUAL){
+					std.debug.print("Expected = for transfer bind, found {s}\n", .{tokens.items[token_index.*].text});
+					return ParseError.UnexpectedToken;
+				}
+				token_index.* += 1;
+				skip_whitespace(tokens.items, token_index) catch {
+					return output;
+				};
+				const loc = try parse_location(mem, tokens, token_index);
+				const val = val64(loc) catch |err| {
+					std.debug.print("Encountered error in Persistence binding: {}\n", .{err});
+					return ParseError.UnexpectedToken;
+				};
+				if (comp){
+					if (debug){
+						std.debug.print("comp persistent put {s} : {}\n", .{name.text, val});
+					}
+					comp_persistent.put(name.text, val)
+						catch unreachable;
+					persistent.put(name.text, val)
+						catch unreachable;
+				}
+				else{
+					if (debug){
+						std.debug.print("persistent put {s} : {}\n", .{name.text, val});
+					}
+					persistent.put(name.text, val)
+						catch unreachable;
+				}
+				continue;
+			},
+			else => {
+				const val = persistent.get(token.text);
+				if (val) |v| {
+					const tok_val = mk_token_from_u64(mem, v);
+					output.append(tok_val)
+						catch unreachable;
+					continue;
+				}
+				output.append(token)
+					catch unreachable;
+			}
+		}
+	}
+	return output;
+}
 
 pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!u64 {
 	try retokenize(mem, tokens);
@@ -6423,12 +6557,16 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 	}
 }
 
-//TODO emulated hardware components of the virtual computer
 //TODO metaprogram parse operation as an interrupt
 	// interrupts: write n to file, read n from file, get input from keyboard/mouse, send info to screen
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 
 //TODO separate comptime and runbind from parse, to make sure that the tool can be used with other languages while still using comptime and runbinds, use a different setting
-//TODO cli
 //TODO machine config
+//TODO file import
+//TODO byte setquence handling?
+	//+string:",,,"
+	//string {c
+		//psh c
+	//}
