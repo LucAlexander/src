@@ -2453,20 +2453,15 @@ pub fn val64(l: Location) RuntimeError!u64 {
 
 const Opcode = enum(u8) {
 	mov_ii=0, mov_il, mov_id,
-	mov_li, mov_ll, mov_ld,
 	mov_di, mov_dl, mov_dd,
 
 	add_iii, add_iil, add_iid, add_ili, add_ill, add_ild, add_idi, add_idl, add_idd,
-	add_lii, add_lil, add_lid, add_lli, add_lll, add_lld, add_ldi, add_ldl, add_ldd,
 	add_dii, add_dil, add_did, add_dli, add_dll, add_dld, add_ddi, add_ddl, add_ddd,
 	sub_iii, sub_iil, sub_iid, sub_ili, sub_ill, sub_ild, sub_idi, sub_idl, sub_idd,
-	sub_lii, sub_lil, sub_lid, sub_lli, sub_lll, sub_lld, sub_ldi, sub_ldl, sub_ldd,
 	sub_dii, sub_dil, sub_did, sub_dli, sub_dll, sub_dld, sub_ddi, sub_ddl, sub_ddd,
 	mul_iii, mul_iil, mul_iid, mul_ili, mul_ill, mul_ild, mul_idi, mul_idl, mul_idd,
-	mul_lii, mul_lil, mul_lid, mul_lli, mul_lll, mul_lld, mul_ldi, mul_ldl, mul_ldd,
 	mul_dii, mul_dil, mul_did, mul_dli, mul_dll, mul_dld, mul_ddi, mul_ddl, mul_ddd,
 	div_iii, div_iil, div_iid, div_ili, div_ill, div_ild, div_idi, div_idl, div_idd,
-	div_lii, div_lil, div_lid, div_lli, div_lll, div_lld, div_ldi, div_ldl, div_ldd,
 	div_dii, div_dil, div_did, div_dli, div_dll, div_dld, div_ddi, div_ddl, div_ddd,
 
 	cmp_ii, cmp_il, cmp_id,
@@ -2491,12 +2486,12 @@ pub fn interpret(start:u64) RuntimeError!void {
 	vm.half_words = std.mem.bytesAsSlice(u32, vm.mem[0..]);
 	const ip = &vm.words[vm.ip/8];
 	ip.* = start/8;
-	const ops: [148]OpBytesFn = .{
-		mov_ii_bytes, mov_il_bytes, mov_id_bytes, mov_li_bytes, mov_ll_bytes, mov_ld_bytes, mov_di_bytes, mov_dl_bytes, mov_dd_bytes,
-		add_iii_bytes, add_iil_bytes, add_iid_bytes, add_ili_bytes, add_ill_bytes, add_ild_bytes, add_idi_bytes, add_idl_bytes, add_idd_bytes, add_lii_bytes, add_lil_bytes, add_lid_bytes, add_lli_bytes, add_lll_bytes, add_lld_bytes, add_ldi_bytes, add_ldl_bytes, add_ldd_bytes, add_dii_bytes, add_dil_bytes, add_did_bytes, add_dli_bytes, add_dll_bytes, add_dld_bytes, add_ddi_bytes, add_ddl_bytes, add_ddd_bytes,
-		sub_iii_bytes, sub_iil_bytes, sub_iid_bytes, sub_ili_bytes, sub_ill_bytes, sub_ild_bytes, sub_idi_bytes, sub_idl_bytes, sub_idd_bytes, sub_lii_bytes, sub_lil_bytes, sub_lid_bytes, sub_lli_bytes, sub_lll_bytes, sub_lld_bytes, sub_ldi_bytes, sub_ldl_bytes, sub_ldd_bytes, sub_dii_bytes, sub_dil_bytes, sub_did_bytes, sub_dli_bytes, sub_dll_bytes, sub_dld_bytes, sub_ddi_bytes, sub_ddl_bytes, sub_ddd_bytes,
-		mul_iii_bytes, mul_iil_bytes, mul_iid_bytes, mul_ili_bytes, mul_ill_bytes, mul_ild_bytes, mul_idi_bytes, mul_idl_bytes, mul_idd_bytes, mul_lii_bytes, mul_lil_bytes, mul_lid_bytes, mul_lli_bytes, mul_lll_bytes, mul_lld_bytes, mul_ldi_bytes, mul_ldl_bytes, mul_ldd_bytes, mul_dii_bytes, mul_dil_bytes, mul_did_bytes, mul_dli_bytes, mul_dll_bytes, mul_dld_bytes, mul_ddi_bytes, mul_ddl_bytes, mul_ddd_bytes,
-		div_iii_bytes, div_iil_bytes, div_iid_bytes, div_ili_bytes, div_ill_bytes, div_ild_bytes, div_idi_bytes, div_idl_bytes, div_idd_bytes, div_lii_bytes, div_lil_bytes, div_lid_bytes, div_lli_bytes, div_lll_bytes, div_lld_bytes, div_ldi_bytes, div_ldl_bytes, div_ldd_bytes, div_dii_bytes, div_dil_bytes, div_did_bytes, div_dli_bytes, div_dll_bytes, div_dld_bytes, div_ddi_bytes, div_ddl_bytes, div_ddd_bytes,
+	const ops: [109]OpBytesFn = .{
+		mov_ii_bytes, mov_il_bytes, mov_id_bytes, mov_di_bytes, mov_dl_bytes, mov_dd_bytes,
+		add_iii_bytes, add_iil_bytes, add_iid_bytes, add_ili_bytes, add_ill_bytes, add_ild_bytes, add_idi_bytes, add_idl_bytes, add_idd_bytes, add_dii_bytes, add_dil_bytes, add_did_bytes, add_dli_bytes, add_dll_bytes, add_dld_bytes, add_ddi_bytes, add_ddl_bytes, add_ddd_bytes,
+		sub_iii_bytes, sub_iil_bytes, sub_iid_bytes, sub_ili_bytes, sub_ill_bytes, sub_ild_bytes, sub_idi_bytes, sub_idl_bytes, sub_idd_bytes, sub_dii_bytes, sub_dil_bytes, sub_did_bytes, sub_dli_bytes, sub_dll_bytes, sub_dld_bytes, sub_ddi_bytes, sub_ddl_bytes, sub_ddd_bytes,
+		mul_iii_bytes, mul_iil_bytes, mul_iid_bytes, mul_ili_bytes, mul_ill_bytes, mul_ild_bytes, mul_idi_bytes, mul_idl_bytes, mul_idd_bytes, mul_dii_bytes, mul_dil_bytes, mul_did_bytes, mul_dli_bytes, mul_dll_bytes, mul_dld_bytes, mul_ddi_bytes, mul_ddl_bytes, mul_ddd_bytes,
+		div_iii_bytes, div_iil_bytes, div_iid_bytes, div_ili_bytes, div_ill_bytes, div_ild_bytes, div_idi_bytes, div_idl_bytes, div_idd_bytes, div_dii_bytes, div_dil_bytes, div_did_bytes, div_dli_bytes, div_dll_bytes, div_dld_bytes, div_ddi_bytes, div_ddl_bytes, div_ddd_bytes,
 		cmp_ii_bytes, cmp_il_bytes, cmp_id_bytes, cmp_li_bytes, cmp_ll_bytes, cmp_ld_bytes, cmp_di_bytes, cmp_dl_bytes, cmp_dd_bytes,
 		jmp_i_bytes, jmp_l_bytes, jmp_d_bytes, jne_i_bytes, jne_l_bytes, jne_d_bytes, jeq_i_bytes, jeq_l_bytes, jeq_d_bytes, jle_i_bytes, jle_l_bytes, jle_d_bytes, jlt_i_bytes, jlt_l_bytes, jlt_d_bytes, jge_i_bytes, jge_l_bytes, jge_d_bytes, jgt_i_bytes, jgt_l_bytes, jgt_d_bytes,
 		int_bytes
@@ -2544,39 +2539,6 @@ pub fn mov_il_bytes(ip: *align(1) u64) RuntimeError!bool {
 }
 
 pub fn mov_id_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const args = vm.words[p+1];
-	const dest = (args & 0xFFFFFFFF);
-	const src_name = args >> 32;
-	const src_imm = vm.words[src_name >> 3];
-	const src = vm.words[src_imm >> 3];
-	vm.words[dest >> 3] = src;
-	return true;
-}
-
-pub fn mov_li_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const args = vm.words[p+1];
-	const dest = (args & 0xFFFFFFFF);
-	const src_name = args >> 32;
-	const src = vm.words[src_name >> 3];
-	vm.words[dest >> 3] = src;
-	return true;
-}
-
-pub fn mov_ll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const args = vm.words[p+1];
-	const dest = (args & 0xFFFFFFFF);
-	const src = args >> 32;
-	vm.words[dest >> 3] = src;
-	return true;
-}
-
-pub fn mov_ld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -2743,141 +2705,6 @@ pub fn add_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 }
 
 pub fn add_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const b_imm = vm.words[b_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a + b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn add_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const b = vm.words[b_name >> 3];
-	const c = a + b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn add_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const c = a + b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn add_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const b_imm = vm.words[b_name >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a + b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn add_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const b = vm.words[b_name >> 3];
-	const c = a + b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn add_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const c = a + b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn add_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const b_imm = vm.words[b_name >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a + b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn add_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const b = vm.words[b_name >> 3];
-	const c = a + b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn add_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const c = a + b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn add_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3173,141 +3000,6 @@ pub fn sub_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const b = vm.words[b_name >> 3];
-	const c = a - b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn sub_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const c = a - b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn sub_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const b_imm = vm.words[b_name >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a - b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn sub_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const b = vm.words[b_name >> 3];
-	const c = a - b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn sub_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const c = a - b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn sub_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const b_imm = vm.words[b_name >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a - b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn sub_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const b = vm.words[b_name >> 3];
-	const c = a - b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn sub_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const c = a - b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn sub_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const b_imm = vm.words[b_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a - b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
 pub fn sub_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
 	ip.* += 2;
@@ -3587,141 +3279,6 @@ pub fn mul_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const b = vm.words[b_name >> 3];
-	const c = a * b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn mul_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const c = a * b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn mul_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const b_imm = vm.words[b_name >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a * b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn mul_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const b = vm.words[b_name >> 3];
-	const c = a * b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn mul_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const c = a * b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn mul_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const b_imm = vm.words[b_name >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a * b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn mul_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const b = vm.words[b_name >> 3];
-	const c = a * b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn mul_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const c = a * b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn mul_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const b_imm = vm.words[b_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a * b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
 pub fn mul_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
 	ip.* += 2;
@@ -3985,141 +3542,6 @@ pub fn div_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 }
 
 pub fn div_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const b_imm = vm.words[b_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a / b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn div_lii_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const b = vm.words[b_name >> 3];
-	const c = a / b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn div_lil_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const c = a / b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn div_lid_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a = vm.words[a_name >> 3];
-	const b_imm = vm.words[b_name >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a / b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn div_lli_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const b = vm.words[b_name >> 3];
-	const c = a / b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn div_lll_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const c = a / b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn div_lld_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const b_imm = vm.words[b_name >> 3];
-	const b = vm.words[b_imm >> 3];
-	const c = a / b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn div_ldi_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b_name = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const b = vm.words[b_name >> 3];
-	const c = a / b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn div_ldl_bytes(ip: *align(1) u64) RuntimeError!bool {
-	const p = ip.*;
-	ip.* += 2;
-	const dest_chunk = vm.words[p];
-	const dest = dest_chunk >> 32;
-	const args = vm.words[p+1];
-	const a_name = (args & 0xFFFFFFFF);
-	const b = args >> 32;
-	const a_imm = vm.words[a_name >> 3];
-	const a = vm.words[a_imm >> 3];
-	const c = a / b;
-	vm.words[dest >> 3] = c;
-	return true;
-}
-
-pub fn div_ldd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4750,18 +4172,15 @@ pub fn reduce_location(loc: *Location) Location {
 }
 
 pub fn reduce_ternary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location, c: Location) void {
-	if (a == .immediate){
-		reduce_binary_operator(seed, data, i, b, c);
-	}
-	else if (a == .literal){
-		reduce_binary_operator(seed+9, data, i, b, c);
+	if (a == .immediate or a == .literal){
+		reduce_binary_suboperator(seed, data, i, b, c);
 	}
 	else if (a == .dereference){
-		reduce_binary_operator(seed+18, data, i, b, c);
+		reduce_binary_suboperator(seed+9, data, i, b, c);
 	}
 }
 
-pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location) void {
+pub fn reduce_binary_suboperator(seed: u8, data: []u8, i:*u64, a: Location, b:Location) void {
 	if (a == .immediate){
 		if (b == .immediate){
 			store_u32(data, i.*, seed);
@@ -4806,6 +4225,37 @@ pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Loc
 	}
 }
 
+pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location) void {
+	if (a == .immediate or a == .literal){
+		if (b == .immediate){
+			store_u32(data, i.*, seed);
+			i.* += 4;
+		}
+		else if (b == .literal){
+			store_u32(data, i.*, seed+1);
+			i.* += 4;
+		}
+		else if (b == .dereference){
+			store_u32(data, i.*, seed+2);
+			i.* += 4;
+		}
+	}
+	else if (a == .dereference){
+		if (b == .immediate){
+			store_u32(data, i.*, seed+3);
+			i.* += 4;
+		}
+		else if (b == .literal){
+			store_u32(data, i.*, seed+4);
+			i.* += 4;
+		}
+		else if (b == .dereference){
+			store_u32(data, i.*, seed+5);
+			i.* += 4;
+		}
+	}
+}
+
 pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 	switch(loc){
 		.immediate => {
@@ -4825,16 +4275,16 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 	}
 }
 
-//TODO more instructions
-	//alu shifts
-	//logical operators
-	//mov instructions
 //TODO emulated hardware components of the virtual computer
 //TODO metaprogram parse operation as an interrupt
 	// interrupts: write n to file, read n from file, get input from keyboard/mouse, send info to screen
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 
+//TODO more instructions
+	//movh movl
+	//and or xor not com
+	//shl shr
 //TODO separate comptime and runbind from parse, to make sure that the tool can be used with other languages while still using comptime and runbinds, use a different setting
 //TODO cli
 //TODO machine config
