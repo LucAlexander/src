@@ -2355,7 +2355,7 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 }
 
 pub fn hash_global_enum(token: Token) u64 {
-	const value = std.fmt.parseInt(u64, token.text, 10) catch {
+	const value = std.fmt.parseInt(u64, token.text, 16) catch {
 		if (comp_section){
 			if (comp_persistent.get(token.text)) |val| {
 				return val;
@@ -2747,7 +2747,7 @@ pub fn movl_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
 	const dest = (args & 0xFFFFFFFF);
 	const src_name = args >> 32;
 	const src = vm.words[src_name >> 3];
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) & (src & 0xFFFFFFFF);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) | (src & 0xFFFFFFFF);
 	return true;
 }
 
@@ -2757,7 +2757,7 @@ pub fn movl_il_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const args = vm.words[p+1];
 	const dest = (args & 0xFFFFFFFF);
 	const src = args >> 32;
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) & (src & 0xFFFFFFFF);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) | (src & 0xFFFFFFFF);
 	return true;
 }
 
@@ -2769,7 +2769,7 @@ pub fn movl_id_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const src_name = args >> 32;
 	const src_imm = vm.words[src_name >> 3];
 	const src = vm.words[src_imm >> 3];
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) & (src & 0xFFFFFFFF);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) | (src & 0xFFFFFFFF);
 	return true;
 }
 
@@ -2781,7 +2781,7 @@ pub fn movl_di_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const dest = vm.words[dest_name >> 3];
 	const src_name = args >> 32;
 	const src = vm.words[src_name >> 3];
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) & (src & 0xFFFFFFFF);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) | (src & 0xFFFFFFFF);
 	return true;
 }
 
@@ -2792,7 +2792,7 @@ pub fn movl_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const dest_name = (args & 0xFFFFFFFF);
 	const dest = vm.words[dest_name >> 3];
 	const src = args >> 32;
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) & (src & 0xFFFFFFFF);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) | (src & 0xFFFFFFFF);
 	return true;
 }
 
@@ -2805,7 +2805,7 @@ pub fn movl_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const src_name = args >> 32;
 	const src_imm = vm.words[src_name >> 3];
 	const src = vm.words[src_imm >> 3];
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) & (src & 0xFFFFFFFF);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF00000000) | (src & 0xFFFFFFFF);
 	return true;
 }
 
@@ -2816,7 +2816,7 @@ pub fn movh_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
 	const dest = (args & 0xFFFFFFFF);
 	const src_name = args >> 32;
 	const src = vm.words[src_name >> 3];
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) & (src & 0xFFFFFFFF00000000);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) | (src << 32);
 	return true;
 }
 
@@ -2826,7 +2826,7 @@ pub fn movh_il_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const args = vm.words[p+1];
 	const dest = (args & 0xFFFFFFFF);
 	const src = args >> 32;
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) & (src & 0xFFFFFFFF00000000);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) | (src << 32);
 	return true;
 }
 
@@ -2838,7 +2838,7 @@ pub fn movh_id_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const src_name = args >> 32;
 	const src_imm = vm.words[src_name >> 3];
 	const src = vm.words[src_imm >> 3];
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) & (src & 0xFFFFFFFF00000000);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) | (src << 32);
 	return true;
 }
 
@@ -2850,7 +2850,7 @@ pub fn movh_di_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const dest = vm.words[dest_name >> 3];
 	const src_name = args >> 32;
 	const src = vm.words[src_name >> 3];
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) & (src & 0xFFFFFFFF00000000);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) | (src << 32);
 	return true;
 }
 
@@ -2861,7 +2861,7 @@ pub fn movh_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const dest_name = (args & 0xFFFFFFFF);
 	const dest = vm.words[dest_name >> 3];
 	const src = args >> 32;
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) & (src & 0xFFFFFFFF00000000);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) | (src << 32);
 	return true;
 }
 
@@ -2874,7 +2874,7 @@ pub fn movh_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	const src_name = args >> 32;
 	const src_imm = vm.words[src_name >> 3];
 	const src = vm.words[src_imm >> 3];
-	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) & (src & 0xFFFFFFFF00000000);
+	vm.words[dest >> 3] = (vm.words[dest >> 3] & 0xFFFFFFFF) | (src << 32);
 	return true;
 }
 
@@ -6303,12 +6303,7 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 
-//TODO more instructions
-	//movh movl
-	//and or xor not com
-	//shl shr
 //TODO separate comptime and runbind from parse, to make sure that the tool can be used with other languages while still using comptime and runbinds, use a different setting
 //TODO cli
 //TODO machine config
-//TODO remove more opcodes, deref? literal compare?
 //TODO hex parsing
