@@ -63,15 +63,8 @@ var frame_buffer_image = rl.Image{
 var frame_buffer_texture:rl.Texture = undefined;
 
 pub fn main() !void {
+	push_builtin_constants();
 	std.debug.assert(total_mem_size % 8 == 0);
-	comp_persistent.put("mbm", frame_buffer) catch unreachable;
-	comp_persistent.put("fbw", frame_buffer_w) catch unreachable;
-	comp_persistent.put("fbh", frame_buffer_h) catch unreachable;
-	comp_persistent.put("mtp", main_size) catch unreachable;
-	persistent.put("mbm", frame_buffer) catch unreachable;
-	persistent.put("fbw", frame_buffer_w) catch unreachable;
-	persistent.put("fbh", frame_buffer_h) catch unreachable;
-	persistent.put("mtp", main_size) catch unreachable;
 	const allocator = std.heap.page_allocator;
 	const args = try std.process.argsAlloc(allocator);
 	switch (args.len){
@@ -117,6 +110,86 @@ pub fn main() !void {
 			std.debug.print("Incorrect number of args, provide -h for help\n", .{});
 		}
 	}
+}
+
+pub fn push_builtin_constants() void {
+	comp_persistent.put("mbm", frame_buffer) catch unreachable;
+	comp_persistent.put("fbw", frame_buffer_w) catch unreachable;
+	comp_persistent.put("fbh", frame_buffer_h) catch unreachable;
+	comp_persistent.put("mtp", main_size) catch unreachable;
+	comp_persistent.put("SRC_MOUSE_LEFT", @intFromEnum(rl.MouseButton.left)) catch unreachable;
+	comp_persistent.put("SRC_MOUSE_RIGHT", @intFromEnum(rl.MouseButton.right)) catch unreachable;
+	comp_persistent.put("SRC_MOUSE_MIDDLE", @intFromEnum(rl.MouseButton.middle)) catch unreachable;
+	comp_persistent.put("SRC_Q", @intFromEnum(rl.KeyboardKey.q)) catch unreachable;
+	comp_persistent.put("SRC_W", @intFromEnum(rl.KeyboardKey.w)) catch unreachable;
+	comp_persistent.put("SRC_E", @intFromEnum(rl.KeyboardKey.e)) catch unreachable;
+	comp_persistent.put("SRC_R", @intFromEnum(rl.KeyboardKey.r)) catch unreachable;
+	comp_persistent.put("SRC_T", @intFromEnum(rl.KeyboardKey.t)) catch unreachable;
+	comp_persistent.put("SRC_Y", @intFromEnum(rl.KeyboardKey.y)) catch unreachable;
+	comp_persistent.put("SRC_U", @intFromEnum(rl.KeyboardKey.u)) catch unreachable;
+	comp_persistent.put("SRC_I", @intFromEnum(rl.KeyboardKey.i)) catch unreachable;
+	comp_persistent.put("SRC_O", @intFromEnum(rl.KeyboardKey.o)) catch unreachable;
+	comp_persistent.put("SRC_P", @intFromEnum(rl.KeyboardKey.p)) catch unreachable;
+	comp_persistent.put("SRC_A", @intFromEnum(rl.KeyboardKey.a)) catch unreachable;
+	comp_persistent.put("SRC_S", @intFromEnum(rl.KeyboardKey.s)) catch unreachable;
+	comp_persistent.put("SRC_D", @intFromEnum(rl.KeyboardKey.d)) catch unreachable;
+	comp_persistent.put("SRC_F", @intFromEnum(rl.KeyboardKey.f)) catch unreachable;
+	comp_persistent.put("SRC_G", @intFromEnum(rl.KeyboardKey.g)) catch unreachable;
+	comp_persistent.put("SRC_H", @intFromEnum(rl.KeyboardKey.h)) catch unreachable;
+	comp_persistent.put("SRC_J", @intFromEnum(rl.KeyboardKey.j)) catch unreachable;
+	comp_persistent.put("SRC_K", @intFromEnum(rl.KeyboardKey.k)) catch unreachable;
+	comp_persistent.put("SRC_L", @intFromEnum(rl.KeyboardKey.l)) catch unreachable;
+	comp_persistent.put("SRC_Z", @intFromEnum(rl.KeyboardKey.z)) catch unreachable;
+	comp_persistent.put("SRC_X", @intFromEnum(rl.KeyboardKey.x)) catch unreachable;
+	comp_persistent.put("SRC_C", @intFromEnum(rl.KeyboardKey.c)) catch unreachable;
+	comp_persistent.put("SRC_V", @intFromEnum(rl.KeyboardKey.v)) catch unreachable;
+	comp_persistent.put("SRC_B", @intFromEnum(rl.KeyboardKey.b)) catch unreachable;
+	comp_persistent.put("SRC_N", @intFromEnum(rl.KeyboardKey.n)) catch unreachable;
+	comp_persistent.put("SRC_M", @intFromEnum(rl.KeyboardKey.m)) catch unreachable;
+	comp_persistent.put("SRC_LEFT", @intFromEnum(rl.KeyboardKey.left)) catch unreachable;
+	comp_persistent.put("SRC_RIGHT", @intFromEnum(rl.KeyboardKey.right)) catch unreachable;
+	comp_persistent.put("SRC_UP", @intFromEnum(rl.KeyboardKey.up)) catch unreachable;
+	comp_persistent.put("SRC_DOWN", @intFromEnum(rl.KeyboardKey.down)) catch unreachable;
+	comp_persistent.put("SRC_SPACE", @intFromEnum(rl.KeyboardKey.space)) catch unreachable;
+	persistent.put("mbm", frame_buffer) catch unreachable;
+	persistent.put("fbw", frame_buffer_w) catch unreachable;
+	persistent.put("fbh", frame_buffer_h) catch unreachable;
+	persistent.put("mtp", main_size) catch unreachable;
+	persistent.put("SRC_MOUSE_LEFT", @intFromEnum(rl.MouseButton.left)) catch unreachable;
+	persistent.put("SRC_MOUSE_RIGHT", @intFromEnum(rl.MouseButton.right)) catch unreachable;
+	persistent.put("SRC_MOUSE_MIDDLE", @intFromEnum(rl.MouseButton.middle)) catch unreachable;
+	persistent.put("SRC_Q", @intFromEnum(rl.KeyboardKey.q)) catch unreachable;
+	persistent.put("SRC_W", @intFromEnum(rl.KeyboardKey.w)) catch unreachable;
+	persistent.put("SRC_E", @intFromEnum(rl.KeyboardKey.e)) catch unreachable;
+	persistent.put("SRC_R", @intFromEnum(rl.KeyboardKey.r)) catch unreachable;
+	persistent.put("SRC_T", @intFromEnum(rl.KeyboardKey.t)) catch unreachable;
+	persistent.put("SRC_Y", @intFromEnum(rl.KeyboardKey.y)) catch unreachable;
+	persistent.put("SRC_U", @intFromEnum(rl.KeyboardKey.u)) catch unreachable;
+	persistent.put("SRC_I", @intFromEnum(rl.KeyboardKey.i)) catch unreachable;
+	persistent.put("SRC_O", @intFromEnum(rl.KeyboardKey.o)) catch unreachable;
+	persistent.put("SRC_P", @intFromEnum(rl.KeyboardKey.p)) catch unreachable;
+	persistent.put("SRC_A", @intFromEnum(rl.KeyboardKey.a)) catch unreachable;
+	persistent.put("SRC_S", @intFromEnum(rl.KeyboardKey.s)) catch unreachable;
+	persistent.put("SRC_D", @intFromEnum(rl.KeyboardKey.d)) catch unreachable;
+	persistent.put("SRC_F", @intFromEnum(rl.KeyboardKey.f)) catch unreachable;
+	persistent.put("SRC_G", @intFromEnum(rl.KeyboardKey.g)) catch unreachable;
+	persistent.put("SRC_H", @intFromEnum(rl.KeyboardKey.h)) catch unreachable;
+	persistent.put("SRC_J", @intFromEnum(rl.KeyboardKey.j)) catch unreachable;
+	persistent.put("SRC_K", @intFromEnum(rl.KeyboardKey.k)) catch unreachable;
+	persistent.put("SRC_L", @intFromEnum(rl.KeyboardKey.l)) catch unreachable;
+	persistent.put("SRC_Z", @intFromEnum(rl.KeyboardKey.z)) catch unreachable;
+	persistent.put("SRC_X", @intFromEnum(rl.KeyboardKey.x)) catch unreachable;
+	persistent.put("SRC_C", @intFromEnum(rl.KeyboardKey.c)) catch unreachable;
+	persistent.put("SRC_V", @intFromEnum(rl.KeyboardKey.v)) catch unreachable;
+	persistent.put("SRC_B", @intFromEnum(rl.KeyboardKey.b)) catch unreachable;
+	persistent.put("SRC_N", @intFromEnum(rl.KeyboardKey.n)) catch unreachable;
+	persistent.put("SRC_M", @intFromEnum(rl.KeyboardKey.m)) catch unreachable;
+	persistent.put("SRC_LEFT", @intFromEnum(rl.KeyboardKey.left)) catch unreachable;
+	persistent.put("SRC_RIGHT", @intFromEnum(rl.KeyboardKey.right)) catch unreachable;
+	persistent.put("SRC_UP", @intFromEnum(rl.KeyboardKey.up)) catch unreachable;
+	persistent.put("SRC_DOWN", @intFromEnum(rl.KeyboardKey.down)) catch unreachable;
+	persistent.put("SRC_SPACE", @intFromEnum(rl.KeyboardKey.space)) catch unreachable;
+
 }
 
 pub fn compile_and_run(filename: []u8) void {
@@ -6596,21 +6669,62 @@ pub fn jle_d_bytes(ip: *align(1) u64) bool {
 
 pub fn int_bytes(ip: *align(1) u64) bool {
 	ip.* += 2;
-	if (vm.mem[vm.r0] == 0){
-		rl.updateTexture(frame_buffer_texture, &vm.mem[0]);
-		rl.beginDrawing();
-		rl.drawTexture(frame_buffer_texture, 0, 0, .white);
-		rl.endDrawing();
-		const fps = rl.getFPS();
-		std.debug.print("{}\n", .{fps});
-		return true;
-	}
-	if (vm.mem[vm.r0] == 1){
-		return false;
-	}
-	if (vm.mem[vm.r0] == 2){
-		std.debug.print("{c}", .{vm.mem[vm.r1]});
-		return true;
+	switch (vm.mem[vm.r0]){
+		0 => {
+			rl.updateTexture(frame_buffer_texture, &vm.mem[0]);
+			rl.beginDrawing();
+			rl.drawTexture(frame_buffer_texture, 0, 0, .white);
+			rl.endDrawing();
+			const fps = rl.getFPS();
+			std.debug.print("{}\n", .{fps});
+			return true;
+		},
+		1 => {
+			return false;
+		},
+		2 => {
+			std.debug.print("{c}", .{vm.mem[vm.r1]});
+			return true;
+		},
+		3 => {
+			if (rl.isKeyDown(@enumFromInt(vm.words[vm.r1/8]))){
+				vm.mem[vm.r2] = 1;
+				return true;
+			}
+			vm.mem[vm.r2] = 0;
+			return true;
+		},
+		4 => {
+			if (rl.isKeyPressed(@enumFromInt(vm.words[vm.r1/8]))){
+				vm.mem[vm.r2] = 1;
+				return true;
+			}
+			vm.mem[vm.r2] = 0;
+			return true;
+		},
+		5 => {
+			const mp = rl.getMousePosition();
+			vm.mem[vm.r1] = @intFromFloat(mp.x);
+			vm.mem[vm.r2] = @intFromFloat(mp.y);
+			return true;
+		},
+		6 => {
+			if (rl.isMouseButtonDown(@enumFromInt(vm.words[vm.r1/8]))){
+				vm.mem[vm.r2] = 1;
+				return true;
+			}
+			vm.mem[vm.r2] = 0;
+			return true;
+		},
+		7 => {
+			if (rl.isMouseButtonPressed(@enumFromInt(vm.words[vm.r1/8]))){
+				vm.mem[vm.r2] = 1;
+				return true;
+			}
+			vm.mem[vm.r2] = 0;
+			return true;
+		},
+		else => {}
 	}
 	return true;
 }
@@ -6759,14 +6873,9 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 	}
 }
 
-//TODO metaprogram parse operation as an interrupt
-//TODO interrupts: get input from keyboard/mouse
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 
+//TODO metaprogram parse operation as an interrupt
+//TODO interrupts: get input from keyboard/mouse
 //TODO machine config
-//TODO byte sequence handling?
-	//+string:",,,"
-	//string {c
-		//psh c
-	//}
