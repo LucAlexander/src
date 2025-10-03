@@ -224,10 +224,7 @@ pub fn run_file(infilename: []u8) void {
 		std.debug.print("Error creating texture\n", .{});
 		return;
 	};
-	interpret(start_ip) catch |err| {
-		std.debug.print("Runtime Error {}\n", .{err});
-		return;
-	};
+	interpret(start_ip);
 }
 
 pub fn metaprogram(tokens: *Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool, headless: ?[]u8) ?u64 {
@@ -358,10 +355,7 @@ pub fn metaprogram(tokens: *Buffer(Token), binds: *Buffer(Bind), mem: *const std
 			std.debug.print("program length: {}\n", .{program_len});
 			std.debug.print("parsed bytecode--------------------\n", .{});
 		}
-		interpret(start_ip) catch |err| {
-			std.debug.print("Runtime Error {}\n", .{err});
-			return null;
-		};
+		interpret(start_ip);
 	}
 	return program_len;
 }
@@ -2057,10 +2051,7 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				if (debug){
 					std.debug.print("Parsed comp segment\n", .{});
 				}
-				interpret(start_ip) catch |err| {
-					std.debug.print("Runtime Error {}\n", .{err});
-					return ParseError.BrokenComptime;
-				};
+				interpret(start_ip);
 				if (debug){
 					std.debug.print("Exiting comp segment\n", .{});
 				}
@@ -2166,10 +2157,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					if (debug) {
 						std.debug.print("Parsed comp segment\n", .{});
 					}
-					interpret(start_ip) catch |err| {
-						std.debug.print("Runtime Error {}\n", .{err});
-						return ParseError.BrokenComptime;
-					};
+					interpret(start_ip);
 					if (debug) {
 						std.debug.print("Exiting comp segment\n", .{});
 					}
@@ -2858,13 +2846,13 @@ pub fn store_u64(addr: u64, val: u64) void {
     @memcpy(vm.mem[addr .. addr + 8], &bytes);	
 }
 
-pub fn loc64(l: Location, val: u64) RuntimeError!void {
+pub fn loc64(l: Location, val: u64) void {
 	switch (l){
 		.immediate => {
 			store_u64(l.immediate, val);
 		},
 		.literal => {
-			return RuntimeError.LiteralAssignment;
+			return;
 		}, 
 		.register => {
 			switch (l.register){
@@ -2874,7 +2862,7 @@ pub fn loc64(l: Location, val: u64) RuntimeError!void {
 				.R3 => {store_u64(vm.r3, val);},
 				.IP => {store_u64(vm.ip, val);},
 				else => {
-					return RuntimeError.UnknownRegister;
+					return;
 				}
 			}
 		},
@@ -2960,9 +2948,9 @@ const Opcode = enum(u8) {
 	int_
 };
 
-const OpBytesFn = *const fn (*align(1) u64) RuntimeError!bool;
+const OpBytesFn = *const fn (*align(1) u64) bool;
 
-pub fn interpret(start:u64) RuntimeError!void {
+pub fn interpret(start:u64) void {
 	vm.words = std.mem.bytesAsSlice(u64, vm.mem[0..]);
 	vm.half_words = std.mem.bytesAsSlice(u32, vm.mem[0..]);
 	const ip = &vm.words[vm.ip/8];
@@ -3003,11 +2991,11 @@ pub fn interpret(start:u64) RuntimeError!void {
 			var buffer: [1]u8 = undefined;
 			_ = stdin.read(&buffer) catch unreachable;
 		}
-		running = try ops[vm.words[ip.*]&0xFFFFFFFF](ip);
+		running = ops[vm.words[ip.*]&0xFFFFFFFF](ip);
 	}
 }
 
-pub fn mov_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
+pub fn mov_ii_bytes(ip: *align(1) u64) bool{
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3018,7 +3006,7 @@ pub fn mov_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
 	return true;
 }
 
-pub fn mov_il_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mov_il_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3028,7 +3016,7 @@ pub fn mov_il_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mov_id_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mov_id_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3040,7 +3028,7 @@ pub fn mov_id_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mov_di_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mov_di_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3052,7 +3040,7 @@ pub fn mov_di_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mov_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mov_dl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3063,7 +3051,7 @@ pub fn mov_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mov_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mov_dd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3076,7 +3064,7 @@ pub fn mov_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movl_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
+pub fn movl_ii_bytes(ip: *align(1) u64) bool{
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3087,7 +3075,7 @@ pub fn movl_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
 	return true;
 }
 
-pub fn movl_il_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movl_il_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3097,7 +3085,7 @@ pub fn movl_il_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movl_id_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movl_id_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3109,7 +3097,7 @@ pub fn movl_id_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movl_di_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movl_di_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3121,7 +3109,7 @@ pub fn movl_di_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movl_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movl_dl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3132,7 +3120,7 @@ pub fn movl_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movl_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movl_dd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3145,7 +3133,7 @@ pub fn movl_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movh_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
+pub fn movh_ii_bytes(ip: *align(1) u64) bool{
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3156,7 +3144,7 @@ pub fn movh_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
 	return true;
 }
 
-pub fn movh_il_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movh_il_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3166,7 +3154,7 @@ pub fn movh_il_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movh_id_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movh_id_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3178,7 +3166,7 @@ pub fn movh_id_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movh_di_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movh_di_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3190,7 +3178,7 @@ pub fn movh_di_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movh_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movh_dl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3201,7 +3189,7 @@ pub fn movh_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn movh_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn movh_dd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const args = vm.words[p+1];
@@ -3214,7 +3202,7 @@ pub fn movh_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3229,7 +3217,7 @@ pub fn add_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3243,7 +3231,7 @@ pub fn add_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3259,7 +3247,7 @@ pub fn add_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3273,7 +3261,7 @@ pub fn add_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3286,7 +3274,7 @@ pub fn add_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3301,7 +3289,7 @@ pub fn add_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3317,7 +3305,7 @@ pub fn add_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3332,7 +3320,7 @@ pub fn add_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3349,7 +3337,7 @@ pub fn add_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3365,7 +3353,7 @@ pub fn add_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3380,7 +3368,7 @@ pub fn add_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3397,7 +3385,7 @@ pub fn add_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3412,7 +3400,7 @@ pub fn add_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3426,7 +3414,7 @@ pub fn add_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3442,7 +3430,7 @@ pub fn add_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3459,7 +3447,7 @@ pub fn add_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3475,7 +3463,7 @@ pub fn add_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn add_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn add_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3493,7 +3481,7 @@ pub fn add_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3508,7 +3496,7 @@ pub fn sub_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3522,7 +3510,7 @@ pub fn sub_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3538,7 +3526,7 @@ pub fn sub_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3552,7 +3540,7 @@ pub fn sub_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3565,7 +3553,7 @@ pub fn sub_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3580,7 +3568,7 @@ pub fn sub_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3596,7 +3584,7 @@ pub fn sub_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3611,7 +3599,7 @@ pub fn sub_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3628,7 +3616,7 @@ pub fn sub_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3644,7 +3632,7 @@ pub fn sub_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3659,7 +3647,7 @@ pub fn sub_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3676,7 +3664,7 @@ pub fn sub_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3691,7 +3679,7 @@ pub fn sub_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3705,7 +3693,7 @@ pub fn sub_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3721,7 +3709,7 @@ pub fn sub_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3738,7 +3726,7 @@ pub fn sub_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3754,7 +3742,7 @@ pub fn sub_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn sub_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn sub_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3772,7 +3760,7 @@ pub fn sub_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3787,7 +3775,7 @@ pub fn mul_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3801,7 +3789,7 @@ pub fn mul_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3817,7 +3805,7 @@ pub fn mul_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3831,7 +3819,7 @@ pub fn mul_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3844,7 +3832,7 @@ pub fn mul_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3859,7 +3847,7 @@ pub fn mul_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3875,7 +3863,7 @@ pub fn mul_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3890,7 +3878,7 @@ pub fn mul_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3907,7 +3895,7 @@ pub fn mul_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3923,7 +3911,7 @@ pub fn mul_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3938,7 +3926,7 @@ pub fn mul_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3955,7 +3943,7 @@ pub fn mul_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3970,7 +3958,7 @@ pub fn mul_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -3984,7 +3972,7 @@ pub fn mul_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4000,7 +3988,7 @@ pub fn mul_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4017,7 +4005,7 @@ pub fn mul_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4033,7 +4021,7 @@ pub fn mul_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mul_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mul_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4051,7 +4039,7 @@ pub fn mul_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4066,7 +4054,7 @@ pub fn div_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4080,7 +4068,7 @@ pub fn div_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4096,7 +4084,7 @@ pub fn div_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4110,7 +4098,7 @@ pub fn div_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4123,7 +4111,7 @@ pub fn div_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4138,7 +4126,7 @@ pub fn div_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4154,7 +4142,7 @@ pub fn div_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4169,7 +4157,7 @@ pub fn div_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4186,7 +4174,7 @@ pub fn div_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4202,7 +4190,7 @@ pub fn div_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4217,7 +4205,7 @@ pub fn div_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4234,7 +4222,7 @@ pub fn div_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4249,7 +4237,7 @@ pub fn div_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4263,7 +4251,7 @@ pub fn div_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4279,7 +4267,7 @@ pub fn div_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4296,7 +4284,7 @@ pub fn div_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4312,7 +4300,7 @@ pub fn div_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn div_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn div_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4330,7 +4318,7 @@ pub fn div_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4345,7 +4333,7 @@ pub fn mod_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4359,7 +4347,7 @@ pub fn mod_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4375,7 +4363,7 @@ pub fn mod_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4389,7 +4377,7 @@ pub fn mod_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4402,7 +4390,7 @@ pub fn mod_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4417,7 +4405,7 @@ pub fn mod_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4433,7 +4421,7 @@ pub fn mod_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4448,7 +4436,7 @@ pub fn mod_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4465,7 +4453,7 @@ pub fn mod_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4481,7 +4469,7 @@ pub fn mod_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4496,7 +4484,7 @@ pub fn mod_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4513,7 +4501,7 @@ pub fn mod_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4528,7 +4516,7 @@ pub fn mod_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4542,7 +4530,7 @@ pub fn mod_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4558,7 +4546,7 @@ pub fn mod_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4575,7 +4563,7 @@ pub fn mod_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4591,7 +4579,7 @@ pub fn mod_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn mod_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn mod_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4609,7 +4597,7 @@ pub fn mod_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4624,7 +4612,7 @@ pub fn and_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4638,7 +4626,7 @@ pub fn and_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4654,7 +4642,7 @@ pub fn and_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4668,7 +4656,7 @@ pub fn and_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4681,7 +4669,7 @@ pub fn and_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4696,7 +4684,7 @@ pub fn and_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4712,7 +4700,7 @@ pub fn and_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4727,7 +4715,7 @@ pub fn and_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4744,7 +4732,7 @@ pub fn and_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4760,7 +4748,7 @@ pub fn and_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4775,7 +4763,7 @@ pub fn and_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4792,7 +4780,7 @@ pub fn and_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4807,7 +4795,7 @@ pub fn and_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4821,7 +4809,7 @@ pub fn and_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4837,7 +4825,7 @@ pub fn and_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4854,7 +4842,7 @@ pub fn and_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4870,7 +4858,7 @@ pub fn and_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn and_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn and_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4888,7 +4876,7 @@ pub fn and_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4903,7 +4891,7 @@ pub fn or_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4917,7 +4905,7 @@ pub fn or_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4933,7 +4921,7 @@ pub fn or_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4947,7 +4935,7 @@ pub fn or_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4960,7 +4948,7 @@ pub fn or_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4975,7 +4963,7 @@ pub fn or_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -4991,7 +4979,7 @@ pub fn or_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5006,7 +4994,7 @@ pub fn or_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5023,7 +5011,7 @@ pub fn or_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5039,7 +5027,7 @@ pub fn or_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5054,7 +5042,7 @@ pub fn or_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5071,7 +5059,7 @@ pub fn or_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5086,7 +5074,7 @@ pub fn or_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5100,7 +5088,7 @@ pub fn or_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5116,7 +5104,7 @@ pub fn or_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5133,7 +5121,7 @@ pub fn or_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5149,7 +5137,7 @@ pub fn or_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn or_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn or_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5167,7 +5155,7 @@ pub fn or_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5182,7 +5170,7 @@ pub fn xor_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5196,7 +5184,7 @@ pub fn xor_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5212,7 +5200,7 @@ pub fn xor_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5226,7 +5214,7 @@ pub fn xor_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5239,7 +5227,7 @@ pub fn xor_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5254,7 +5242,7 @@ pub fn xor_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5270,7 +5258,7 @@ pub fn xor_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5285,7 +5273,7 @@ pub fn xor_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5302,7 +5290,7 @@ pub fn xor_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5318,7 +5306,7 @@ pub fn xor_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5333,7 +5321,7 @@ pub fn xor_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5350,7 +5338,7 @@ pub fn xor_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5365,7 +5353,7 @@ pub fn xor_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5379,7 +5367,7 @@ pub fn xor_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5395,7 +5383,7 @@ pub fn xor_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5412,7 +5400,7 @@ pub fn xor_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5428,7 +5416,7 @@ pub fn xor_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn xor_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn xor_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5446,7 +5434,7 @@ pub fn xor_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5461,7 +5449,7 @@ pub fn shl_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5475,7 +5463,7 @@ pub fn shl_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5491,7 +5479,7 @@ pub fn shl_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5505,7 +5493,7 @@ pub fn shl_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5518,7 +5506,7 @@ pub fn shl_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5533,7 +5521,7 @@ pub fn shl_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5549,7 +5537,7 @@ pub fn shl_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5564,7 +5552,7 @@ pub fn shl_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5581,7 +5569,7 @@ pub fn shl_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5597,7 +5585,7 @@ pub fn shl_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5612,7 +5600,7 @@ pub fn shl_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5629,7 +5617,7 @@ pub fn shl_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5644,7 +5632,7 @@ pub fn shl_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5658,7 +5646,7 @@ pub fn shl_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5674,7 +5662,7 @@ pub fn shl_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5691,7 +5679,7 @@ pub fn shl_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5707,7 +5695,7 @@ pub fn shl_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shl_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shl_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5725,7 +5713,7 @@ pub fn shl_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_iii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5740,7 +5728,7 @@ pub fn shr_iii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_iil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5754,7 +5742,7 @@ pub fn shr_iil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_iid_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5770,7 +5758,7 @@ pub fn shr_iid_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_ili_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5784,7 +5772,7 @@ pub fn shr_ili_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_ill_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5797,7 +5785,7 @@ pub fn shr_ill_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_ild_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5812,7 +5800,7 @@ pub fn shr_ild_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_idi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5828,7 +5816,7 @@ pub fn shr_idi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_idl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5843,7 +5831,7 @@ pub fn shr_idl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_idd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5860,7 +5848,7 @@ pub fn shr_idd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_dii_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5876,7 +5864,7 @@ pub fn shr_dii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_dil_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5891,7 +5879,7 @@ pub fn shr_dil_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_did_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_did_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5908,7 +5896,7 @@ pub fn shr_did_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_dli_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5923,7 +5911,7 @@ pub fn shr_dli_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_dll_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5937,7 +5925,7 @@ pub fn shr_dll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_dld_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5953,7 +5941,7 @@ pub fn shr_dld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_ddi_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5970,7 +5958,7 @@ pub fn shr_ddi_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_ddl_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -5986,7 +5974,7 @@ pub fn shr_ddl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn shr_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn shr_ddd_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -6004,7 +5992,7 @@ pub fn shr_ddd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn not_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
+pub fn not_ii_bytes(ip: *align(1) u64) bool{
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -6020,7 +6008,7 @@ pub fn not_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
 	return true;
 }
 
-pub fn not_il_bytes(ip: *align(1) u64) RuntimeError!bool{
+pub fn not_il_bytes(ip: *align(1) u64) bool{
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -6035,7 +6023,7 @@ pub fn not_il_bytes(ip: *align(1) u64) RuntimeError!bool{
 	return true;
 }
 
-pub fn com_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
+pub fn com_ii_bytes(ip: *align(1) u64) bool{
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -6048,7 +6036,7 @@ pub fn com_ii_bytes(ip: *align(1) u64) RuntimeError!bool{
 	return true;
 }
 
-pub fn com_il_bytes(ip: *align(1) u64) RuntimeError!bool{
+pub fn com_il_bytes(ip: *align(1) u64) bool{
 	const p = ip.*;
 	ip.* += 2;
 	const dest_chunk = vm.words[p];
@@ -6060,7 +6048,7 @@ pub fn com_il_bytes(ip: *align(1) u64) RuntimeError!bool{
 	return true;
 }
 
-pub fn cmp_ii_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn cmp_ii_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -6079,7 +6067,7 @@ pub fn cmp_ii_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn cmp_il_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn cmp_il_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -6097,7 +6085,7 @@ pub fn cmp_il_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn cmp_id_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn cmp_id_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left = vm.words[left_name >> 3];
@@ -6117,7 +6105,7 @@ pub fn cmp_id_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn cmp_li_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn cmp_li_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -6135,7 +6123,7 @@ pub fn cmp_li_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn cmp_ll_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn cmp_ll_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right = args >> 32;
@@ -6152,7 +6140,7 @@ pub fn cmp_ll_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn cmp_ld_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn cmp_ld_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -6171,7 +6159,7 @@ pub fn cmp_ld_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn cmp_di_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn cmp_di_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left_imm = vm.words[left_name >> 3];
@@ -6191,7 +6179,7 @@ pub fn cmp_di_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn cmp_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn cmp_dl_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left_imm = vm.words[left_name >> 3];
@@ -6210,7 +6198,7 @@ pub fn cmp_dl_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn cmp_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn cmp_dd_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left_imm = vm.words[left_name >> 3];
@@ -6231,20 +6219,20 @@ pub fn cmp_dd_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jmp_i_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jmp_i_bytes(ip: *align(1) u64) bool {
 	const label = vm.words[ip.*+1] >> 32;
 	const dest = vm.words[label >> 3];
 	ip.* = dest;
 	return true;
 }
 
-pub fn jmp_l_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jmp_l_bytes(ip: *align(1) u64) bool {
 	const label = vm.words[ip.*+1] >> 32;
 	ip.* = label;
 	return true;
 }
 
-pub fn jmp_d_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jmp_d_bytes(ip: *align(1) u64) bool {
 	const label = vm.words[ip.*+1] >> 32;
 	const label_imm = vm.words[label >> 3];
 	const dest = vm.words[label_imm >> 3];
@@ -6252,7 +6240,7 @@ pub fn jmp_d_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jne_i_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jne_i_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] != 0){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
@@ -6264,7 +6252,7 @@ pub fn jne_i_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jne_l_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jne_l_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] != 0){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
@@ -6275,7 +6263,7 @@ pub fn jne_l_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jne_d_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jne_d_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] != 0){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
@@ -6288,7 +6276,7 @@ pub fn jne_d_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jeq_i_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jeq_i_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] == 0){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
@@ -6300,7 +6288,7 @@ pub fn jeq_i_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jeq_l_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jeq_l_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] == 0){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
@@ -6311,7 +6299,7 @@ pub fn jeq_l_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jeq_d_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jeq_d_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] == 0){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
@@ -6324,7 +6312,7 @@ pub fn jeq_d_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jgt_i_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jgt_i_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] == 1){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
@@ -6336,7 +6324,7 @@ pub fn jgt_i_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jgt_l_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jgt_l_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] == 1){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
@@ -6347,7 +6335,7 @@ pub fn jgt_l_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jgt_d_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jgt_d_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] == 1){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
@@ -6360,7 +6348,7 @@ pub fn jgt_d_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jge_i_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jge_i_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] != 2){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
@@ -6372,7 +6360,7 @@ pub fn jge_i_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jge_l_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jge_l_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] != 2){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
@@ -6383,7 +6371,7 @@ pub fn jge_l_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jge_d_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jge_d_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] != 2){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
@@ -6396,7 +6384,7 @@ pub fn jge_d_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jlt_i_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jlt_i_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] == 2){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
@@ -6408,7 +6396,7 @@ pub fn jlt_i_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jlt_l_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jlt_l_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] == 2){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
@@ -6419,7 +6407,7 @@ pub fn jlt_l_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jlt_d_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jlt_d_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] == 2){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
@@ -6432,7 +6420,7 @@ pub fn jlt_d_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jle_i_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jle_i_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] != 1){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
@@ -6444,7 +6432,7 @@ pub fn jle_i_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jle_l_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jle_l_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] != 1){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
@@ -6455,7 +6443,7 @@ pub fn jle_l_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn jle_d_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn jle_d_bytes(ip: *align(1) u64) bool {
 	if (vm.mem[vm.sr] != 1){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
@@ -6468,7 +6456,7 @@ pub fn jle_d_bytes(ip: *align(1) u64) RuntimeError!bool {
 	return true;
 }
 
-pub fn int_bytes(ip: *align(1) u64) RuntimeError!bool {
+pub fn int_bytes(ip: *align(1) u64) bool {
 	ip.* += 2;
 	if (vm.mem[vm.r0] == 0){
 		rl.updateTexture(frame_buffer_texture, &vm.mem[0]);
