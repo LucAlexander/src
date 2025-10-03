@@ -138,7 +138,7 @@ pub fn compile_and_run(filename: []u8) void {
 	var main_mem = std.heap.ArenaAllocator.init(allocator);
 	defer main_mem.deinit();
 	const mem = main_mem.allocator();
-	const tokens = tokenize(&mem, contents);
+	var tokens = tokenize(&mem, contents);
 	show_tokens(tokens);
 	if (debug){
 		std.debug.print("initial------------------------------\n", .{});
@@ -171,7 +171,7 @@ pub fn compile_and_write(infilename: []u8, outfilename: []u8, plugin: bool) void
 	var main_mem = std.heap.ArenaAllocator.init(allocator);
 	defer main_mem.deinit();
 	const mem = main_mem.allocator();
-	const tokens = tokenize(&mem, contents);
+	var tokens = tokenize(&mem, contents);
 	show_tokens(tokens);
 	if (debug){
 		std.debug.print("initial------------------------------\n", .{});
@@ -230,7 +230,7 @@ pub fn run_file(infilename: []u8) void {
 	};
 }
 
-pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool, headless: ?[]u8) ?u64 {
+pub fn metaprogram(tokens: *Buffer(Token), binds: *Buffer(Bind), mem: *const std.mem.Allocator, run: bool, headless: ?[]u8) ?u64 {
 	const allocator = std.heap.page_allocator;
 	var main_aux = std.heap.ArenaAllocator.init(allocator);
 	var main_txt = std.heap.ArenaAllocator.init(allocator);
@@ -244,7 +244,14 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 		.text=&text,
 		.binds=binds
 	};
-	var token_stream = tokens;
+	var token_stream = import_flatten(mem, tokens) catch |err| {
+		std.debug.print("Error flattening imports: {}\n", .{err});
+		return null;
+	};
+	show_tokens(token_stream.*);
+	if (debug){
+		std.debug.print("flattened-------------------------------\n", .{});
+	}
 	var token_index: u64 = 0;
 	program.text=&text;
 	var concatenated = true;
@@ -359,6 +366,71 @@ pub fn metaprogram(tokens: *const Buffer(Token), binds: *Buffer(Bind), mem: *con
 	return program_len;
 }
 
+pub fn import_flatten(mem: *const std.mem.Allocator, input_tokens: *Buffer(Token)) ParseError!*Buffer(Token) {
+	var tokens = input_tokens;
+	const allocator = std.heap.page_allocator;
+	var new = mem.create(Buffer(Token)) catch {
+		std.debug.print("could not allocate aux buffer for import flatten\n", .{});
+		return ParseError.FileError;
+	};
+	new.* = Buffer(Token).init(mem.*);
+	var imported = true;
+	while (imported){
+		var token_index: u64 = 0;
+		imported = false;
+		while (token_index < tokens.items.len){
+			const token = tokens.items[token_index];
+			if (token.tag == .USING){
+				token_index += 1;
+				try skip_whitespace(tokens.items, &token_index);
+				const filename = tokens.items[token_index];
+				token_index += 1;
+				const buffer = mem.alloc(u8, 64) catch unreachable;
+				const infile = std.fmt.bufPrint(buffer, "{s}{s}", .{filename.text, ".src"}) catch {
+					std.debug.print("Unable to allcoate filename {s}{s}\n", .{filename.text, ".src"});
+					return ParseError.FileError;
+				};
+				var file = std.fs.cwd().openFile(infile, .{}) catch {
+					std.debug.print("File not found: {s}\n", .{infile});
+					return ParseError.FileNotFound;
+				};
+				defer file.close();
+				const stat = file.stat() catch {
+					std.debug.print("Broken file stat: {s}\n", .{infile});
+					return ParseError.FileNotFound;
+				};
+				const contents = file.readToEndAlloc(allocator, stat.size+1) catch {
+					std.debug.print("Error reading file: {s}\n", .{infile});
+					return ParseError.FileNotFound;
+				};
+				const opinion = tokenize(mem, contents);
+				new.appendSlice(opinion.items)
+					catch unreachable;
+				imported = true;
+				continue;
+			}
+			new.append(token)
+				catch unreachable;
+			token_index += 1;
+		}
+		if (imported){
+			show_tokens(new.*);
+			if (debug){
+				std.debug.print("flattened once---------------------------\n", .{});
+			}
+			const temp = tokens;
+			tokens = new;
+			new = temp;
+			new.clearRetainingCapacity();
+		}
+	}
+	show_tokens(new.*);
+	if (debug){
+		std.debug.print("final flatten---------------------------\n", .{});
+	}
+	return new;
+}
+
 const ParseError = error {
 	PrematureEnd,
 	UnexpectedToken,
@@ -367,11 +439,14 @@ const ParseError = error {
 	ConstMatched,
 	BrokenComptime,
 	NoHoist,
-	NoArgs
+	NoArgs,
+	FileNotFound,
+	FileError
 };
 
 const TOKEN = enum {
 	BIND, COMP_START, COMP_END,
+	USING,
 	IDENTIFIER,
 	OPEN_BRACK, CLOSE_BRACK,
 	OPEN_BRACE, CLOSE_BRACE,
@@ -483,6 +558,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	var i: u64 = 0;
 	var token_map = std.StringHashMap(TOKEN).init(mem.*);
 	token_map.put("bind", .BIND) catch unreachable;
+	token_map.put("using_opinion", .USING) catch unreachable;
 	token_map.put("...", .ELIPSES) catch unreachable;
 	token_map.put(";;;", .HOIST) catch unreachable;
 	var tokens = Buffer(Token).init(mem.*);
@@ -6558,14 +6634,14 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 }
 
 //TODO metaprogram parse operation as an interrupt
-	// interrupts: write n to file, read n from file, get input from keyboard/mouse, send info to screen
+//TODO interrupts: get input from keyboard/mouse
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 
-//TODO separate comptime and runbind from parse, to make sure that the tool can be used with other languages while still using comptime and runbinds, use a different setting
 //TODO machine config
 //TODO file import
-//TODO byte setquence handling?
+//TODO error handling optimization
+//TODO byte sequence handling?
 	//+string:",,,"
 	//string {c
 		//psh c
