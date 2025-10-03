@@ -1,5 +1,7 @@
 # Src
 
+Check the included src files in the repository for examples, these docs are minimal.
+
 ## Binds
 
 ```
@@ -128,7 +130,77 @@ binds `hi_byte` to the constant stored in r1 on the comptime vm: `FF`.
 
 ### ISA
 
-#### Builtin Regsiters: `r0 r1 r2 r3 ip`
+Builtin Regsiters = r0 | r1 | r2 | r3 | ip
+Opcodes = mov loc loc
+        | movh loc loc
+        | movl loc loc
+        | add loc loc loc
+        | sub loc loc loc
+        | mul loc loc loc
+        | div loc loc loc
+        | mod loc loc loc
+        | and loc loc loc
+        | xor loc loc loc
+        | or loc loc loc
+        | shl loc loc loc
+        | shr loc loc loc
+        | not loc loc
+        | com loc loc
+        | cmp loc loc
+        | jmp loc
+        | jlt loc
+        | jgt loc
+        | jeq loc
+        | jne loc
+        | jle loc
+        | jge loc
+        | int
 
+loc = [deref] | literal | address
+deref = literal | address
+address = (hex integer)
+literal = !(hex integer)
+
+### Interrupts
+
+r0: 0
+blit frame buffer to screen
+
+r0: 1
+end program execution
+
+r0: 2
+r1: value
+print value to external stderr 
+
+r0: 3
+r1: key
+r2 <- is key down
+
+r0: 4
+r1: key
+r2 <- is key pressed
+
+r0: 5
+r1 <- mouse x
+r2 <- mouse y
+
+r0: 6
+r1: mouse button
+r2 <- is button down
+
+r0: 7
+r1: mouse button
+r2 <- is button pressed
 
 ### Builtin Symbols
+mtp: memory top
+mbm: memory bottom (frame buffer_size)
+fbw: frame buffer width
+fbh: frame buffer height 
+SRC_MOUST_LEFT
+SRC_MOUSE_RIGHT
+SRC_MOUSE_MIDDLE
+SRC_Q - M
+SRC_LEFT RIGHT UP DOWN
+SRC_SPACE
