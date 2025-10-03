@@ -1,0 +1,19 @@
+bind 1 +string:" ,,, " {
+	mov r2 !mtp
+	string{c
+		sub r2 r2 !8
+		mov [r2] c
+	}
+	mov r0 !2
+	mov r2 !mtp
+	string{c
+		sub r2 r2 !8
+		mov r1 [r2]
+		int
+	}
+}
+
+"hello world"
+
+mov r0 !1
+int

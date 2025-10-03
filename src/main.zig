@@ -448,6 +448,7 @@ const TOKEN = enum {
 	ARGUMENT,
 	IS_OF,
 	ELIPSES,
+	BYTE_ELIPSES,
 	EXCLUSION,
 	OPTIONAL,
 	UNIQUE,
@@ -487,6 +488,10 @@ const Pattern = union(enum) {
 		open: *Arg,
 		close: *Arg
 	},
+	byte_group: struct {
+		open: *Arg,
+		close: *Arg
+	},
 	variadic: struct {
 		members: Buffer(*Arg),
 		separator: ?*Arg
@@ -501,7 +506,6 @@ const Bind = struct {
 	text: Buffer(Token)
 };
 
-//TODO memory optimization
 const ArgTree = struct {
 	nodes: Buffer(*ArgTree),
 	arg: Arg,
@@ -554,6 +558,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	token_map.put("bind", .BIND) catch unreachable;
 	token_map.put("using_opinion", .USING) catch unreachable;
 	token_map.put("...", .ELIPSES) catch unreachable;
+	token_map.put(",,,", .BYTE_ELIPSES) catch unreachable;
 	token_map.put(";;;", .HOIST) catch unreachable;
 	var tokens = Buffer(Token).init(mem.*);
 	while (i<text.len){
@@ -1017,6 +1022,19 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 	open_loc.* = try parse_arg(mem, tokens, token_index);
 	try skip_whitespace(tokens, token_index);
 	if (tokens[token_index.*].tag != .ELIPSES){
+		if (tokens[token_index.*].tag == .BYTE_ELIPSES){
+			token_index.* += 1;
+			try skip_whitespace(tokens, token_index);
+			const close_loc = mem.create(Arg)
+				catch unreachable;
+			close_loc.* = try parse_arg(mem, tokens, token_index);
+			return Pattern{
+				.byte_group = .{
+					.open = open_loc,
+					.close=close_loc
+				}
+			};
+		}
 		std.debug.print("Expected elipses ... for grouping expression, found {s}\n", .{tokens[token_index.*].text});
 		return ParseError.UnexpectedToken;
 	}
@@ -1112,6 +1130,11 @@ pub fn show_arg(arg: Arg) void {
 			std.debug.print("...", .{});
 			show_arg(arg.pattern.group.close.*);
 		},
+		.byte_group => {
+			show_arg(arg.pattern.byte_group.open.*);
+			std.debug.print(",,,", .{});
+			show_arg(arg.pattern.byte_group.close.*);
+		},
 		.variadic => {
 			std.debug.print("VARIADIC_OPEN\n", .{});
 			for (arg.pattern.variadic.members.items) |positional| {
@@ -1162,6 +1185,26 @@ pub fn apply_rule(mem: *const std.mem.Allocator, uniques: *std.StringHashMap([]u
 		}
 	}
 	unreachable;
+}
+
+pub fn convert_bytesequence(mem: *const std.mem.Allocator, tokens: []Token) []Token {
+	std.debug.assert(tokens.len != 0);
+	var concat = Buffer(u8).init(mem.*);
+	var hoist = Buffer(AppliedBind).init(mem.*);
+	for (tokens) |token| {
+		if (token.hoist_data) |hd| {
+			hoist.appendSlice(hd.items)
+				catch unreachable;
+		}
+		concat.appendSlice(token.text)
+			catch unreachable;
+	}
+	var tok = mem.alloc(Token, 1)
+		catch unreachable;
+	tok[0] = Token{
+		.tag=.IDENTIFIER, .text=concat.items, .hoist_data=hoist
+	};
+	return tok;
 }
 
 pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern, tokens: []Token, token_index: u64, var_depth: u64, uniques: *std.StringHashMap([]u8)) PatternError!*ArgTree {
@@ -1247,6 +1290,37 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 				break;
 			}
 			const tree = ArgTree.init(mem, name, tokens[after_first..before_last]);
+			tree.expansion_len = temp_index-token_index;
+			tree.nodes = list;
+			return tree;
+		},
+		.byte_group => {
+			var list = Buffer(*ArgTree).init(mem.*);
+			const open_sequence = try apply_rule(mem, uniques, pattern.byte_group.open, tokens, token_index, var_depth);
+			var temp_index = token_index;
+			if (open_sequence) |seq| {
+				std.debug.assert(seq.expansion != null);
+				list.append(seq)
+					catch unreachable;
+				temp_index += seq.expansion_len;
+			}
+			const after_first = temp_index;
+			var before_last = temp_index;
+			while (temp_index < tokens.len){
+				const close_sequence = apply_rule(mem, uniques, pattern.byte_group.close, tokens, temp_index, var_depth) catch {
+					temp_index += 1;
+					continue;
+				};
+				if (close_sequence) |close| {
+					std.debug.assert(close.expansion != null);
+					list.append(close)
+						catch unreachable;
+					before_last = temp_index;
+					temp_index += close.expansion_len;
+				}
+				break;
+			}
+			const tree = ArgTree.init(mem, name, convert_bytesequence(mem, tokens[after_first..before_last]));
 			tree.expansion_len = temp_index-token_index;
 			tree.nodes = list;
 			return tree;
@@ -1639,6 +1713,64 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 				}
 				continue :outer;
 			}
+			if (arg.arg.pattern == Pattern.byte_group){
+				if (index < current_bind.text.items.len){
+					if (current_bind.text.items[index+1].tag == .OPEN_BRACE){
+						const save_index = index+2;
+						const byte_token = current_bind.text.items[save_index];
+						for (0..arg.expansion.?[0].text.len) |i| {
+							const byte_arg = Arg{
+								.tag=.inclusion,
+								.name=byte_token,
+								.pattern=Pattern {
+									.keyword=byte_token
+								}
+							};
+							const byte_expansion_token = mem.alloc(Token, 2) catch unreachable;
+							const lit_buf = mem.alloc(u8, 1) catch unreachable;
+							lit_buf[0] = '!';
+							byte_expansion_token[0] = Token{
+								.tag=.LIT,
+								.text=lit_buf,
+								.hoist_data = null
+							};
+							byte_expansion_token[1] = Token{
+								.tag=.IDENTIFIER,
+								.text=to_byte_token_slice(mem, arg.expansion.?[0].text[i]),
+								.hoist_data = null
+							};
+							const byte_application = ArgTree.init(mem, byte_arg, byte_expansion_token);
+							stack.append(byte_application)
+								catch unreachable;
+							index = try rewrite(mem, outer_binds, current, new, save_index+1, true, false, stack);
+							_ = stack.pop();
+						}
+						continue :outer;
+					}
+				}
+				std.debug.assert(arg.expansion != null);
+				for (arg.expansion.?) |*tok| {
+					var tmp_tok = tok.*;
+					if (first){
+						first = false;
+						if (current_bind.hoist_token) |_|{
+							if (tmp_tok.hoist_data) |_|{
+								tmp_tok.hoist_data.?.append(current)
+									catch unreachable;
+							}
+							else{
+								var hd = Buffer(AppliedBind).init(mem.*);
+								hd.append(current)
+									catch unreachable;
+								tmp_tok.hoist_data = hd;
+							}
+						}
+					}
+					new.append(tmp_tok)
+						catch unreachable;
+				}
+				continue :outer;
+			}
 			if (arg.arg.pattern == Pattern.variadic){
 				if (index < current_bind.text.items.len){
 					if (current_bind.text.items[index+1].tag == .OPEN_BRACE){
@@ -1727,6 +1859,12 @@ pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), curren
 			catch unreachable;
 	}
 	return index;
+}
+
+pub fn to_byte_token_slice(mem: *const std.mem.Allocator, c: u8) []u8 {
+	const buf: []u8 = mem.alloc(u8, 2) catch unreachable;
+	const text = std.fmt.bufPrint(buf, "{x:02}", .{c}) catch unreachable;
+	return text;
 }
 
 pub fn concat_pass(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *const Buffer(Token)) ParseError!bool {
@@ -6471,7 +6609,7 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 		return false;
 	}
 	if (vm.mem[vm.r0] == 2){
-		std.debug.print("{}\n", .{vm.mem[vm.r1]});
+		std.debug.print("{c}", .{vm.mem[vm.r1]});
 		return true;
 	}
 	return true;
@@ -6627,8 +6765,6 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 //TODO introduce propper debugger state
 
 //TODO machine config
-//TODO file import
-//TODO error handling optimization
 //TODO byte sequence handling?
 	//+string:",,,"
 	//string {c
