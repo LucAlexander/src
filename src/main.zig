@@ -6877,5 +6877,4 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 //TODO introduce propper debugger state
 
 //TODO metaprogram parse operation as an interrupt
-//TODO interrupts: get input from keyboard/mouse
 //TODO machine config
