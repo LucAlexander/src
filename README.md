@@ -130,6 +130,7 @@ binds `hi_byte` to the constant stored in r1 on the comptime vm: `FF`.
 
 ### ISA
 
+```
 Builtin Regsiters = r0 | r1 | r2 | r3 | ip
 Opcodes = mov loc loc
         | movh loc loc
@@ -160,9 +161,11 @@ loc = [deref] | literal | address
 deref = literal | address
 address = (hex integer)
 literal = !(hex integer)
+```
 
 ### Interrupts
 
+```
 r0: 0
 blit frame buffer to screen
 
@@ -192,8 +195,10 @@ r2 <- is button down
 r0: 7
 r1: mouse button
 r2 <- is button pressed
+```
 
 ### Builtin Symbols
+```
 mtp: memory top
 mbm: memory bottom (frame buffer_size)
 fbw: frame buffer width
@@ -204,3 +209,4 @@ SRC_MOUSE_MIDDLE
 SRC_Q - M
 SRC_LEFT RIGHT UP DOWN
 SRC_SPACE
+```
