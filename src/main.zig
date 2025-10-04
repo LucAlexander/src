@@ -6724,9 +6724,38 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 			vm.mem[vm.r2] = 0;
 			return true;
 		},
+		8 => {
+			const addr = vm.mem[vm.r1];
+			const len = vm.mem[vm.r2];
+			const dest = vm.mem[vm.r3];
+			const slice = vm.mem[addr..addr+len];
+			compile_and_load(slice, dest);
+		},
 		else => {}
 	}
 	return true;
+}
+
+pub fn compile_and_load(contents: []u8, addr: u64) void {
+	const allocator = std.heap.page_allocator;
+	var main_mem = std.heap.ArenaAllocator.init(allocator);
+	defer main_mem.deinit();
+	const mem = main_mem.allocator();
+	var tokens = tokenize(&mem, contents);
+	show_tokens(tokens);
+	if (debug){
+		std.debug.print("initial------------------------------\n", .{});
+	}
+	var binds = Buffer(Bind).init(mem);
+	var old = vm;
+	vm = VM.init();
+	const program_len = metaprogram(&tokens, &binds, &mem, false, null);
+	if (program_len) |len| {
+		for (addr..addr+len, vm.mem[start_ip..]) |index, byte| {
+			old.mem[index] = byte;
+		}
+	}
+	vm = old;
 }
 
 pub fn reduce_location(loc: *Location) Location {
@@ -6877,4 +6906,3 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 //TODO introduce propper debugger state
 
 //TODO metaprogram parse operation as an interrupt
-//TODO machine config
