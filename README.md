@@ -195,6 +195,11 @@ r2 <- is button down
 r0: 7
 r1: mouse button
 r2 <- is button pressed
+
+r0: 8
+r1: in address of program
+r2: in length of program
+r3 <- address to write compiled program
 ```
 
 ### Builtin Symbols
