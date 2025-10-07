@@ -382,6 +382,9 @@ pub fn metaprogram(tokens: *Buffer(Token), binds: *Buffer(Bind), mem: *const std
 			std.debug.print("Error while concatenating {}\n", .{err});
 			return null;
 		};
+		if (debug){
+			std.debug.print("concatenated------------\n", .{});
+		}
 		if (program.text == &auxil){
 			program.text = &text;
 			token_stream = &auxil;
@@ -957,7 +960,6 @@ pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u
 	}
 	if (tokens[token_index.*].tag == .IDENTIFIER or
 		tokens[token_index.*].tag == .WHITESPACE or
-		tokens[token_index.*].tag == .CONCAT or
 		tokens[token_index.*].tag == .LINE_END){
 		const arg = Arg {
 			.tag = .inclusion,
@@ -1287,7 +1289,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 			if (new_index >= tokens.len){
 				return PatternError.UnexpectedEOF; 
 			}
-			return ArgTree.init(mem, name, tokens[token_index..new_index+1]);
+			return ArgTree.init(mem, name, tokens[new_index..new_index+1]);
 		},
 		.keyword => {
 			if (pattern.keyword.tag == .LINE_END){
