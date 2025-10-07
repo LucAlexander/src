@@ -776,6 +776,10 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), progra
 			token_index.* += 1;
 			continue;
 		}
+		const token_index_copy = token_index.*;
+		if (debug){
+			std.debug.print("{}\n", .{token_index_copy});
+		}
 		if (try parse_bind(mem, tokens.items, token_index)) |bind| {
 			done = false;
 			program.binds.append(bind)
@@ -1965,7 +1969,7 @@ pub fn concat_pass(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: 
 		var right = program.items[index+2];
 		offset = 1;
 		while (right.tag == .SPACE or right.tag == .TAB or right.tag == .NEW_LINE){
-			right = program.items[index+offset];
+			right = program.items[index+2+offset];
 			offset += 1;
 		}
 		const together = mem.alloc(u8, left.text.len+right.text.len)
@@ -1981,7 +1985,7 @@ pub fn concat_pass(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: 
 		}
 		new.append(Token{.tag=.IDENTIFIER,.text=together, .hoist_data=null})
 			catch unreachable;
-		index += 3+offset;
+		index += 3+(offset-1);
 	}
 	while (index < program.items.len) : (index += 1){
 		new.append(program.items[index])
