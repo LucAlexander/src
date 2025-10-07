@@ -3188,22 +3188,82 @@ pub fn interpret(start:u64) void {
 	var running = true;
 	while (running) {
 		if (debug){
-			std.debug.print("{}: {x:016} {x:016} \n", .{
-				ip.* * 8,
-				vm.words[ip.*],
-				vm.words[ip.*+1],
-			});
-			std.debug.print("r0: {}\n", .{load_u64(vm.r0)});
-			std.debug.print("r1: {}\n", .{load_u64(vm.r1)});
-			std.debug.print("r2: {}\n", .{load_u64(vm.r2)});
-			std.debug.print("r3: {}\n", .{load_u64(vm.r3)});
-			std.debug.print("sr: {}\n", .{load_u64(vm.sr)});
+			const stdout = std.io.getStdOut().writer();
+			stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
+			debug_show_instruction_ref_path(vm.words[vm.ip/8]);
+			debug_show_instruction_ref_path(vm.words[vm.ip/8]-2);
+			stdout.print("\x1b[H", .{}) catch unreachable;
+			debug_show_registers();
+			debug_show_instructions();
 			var stdin = std.io.getStdIn().reader();
 			var buffer: [1]u8 = undefined;
 			_ = stdin.read(&buffer) catch unreachable;
 		}
 		running = ops[vm.words[ip.*]&0xFFFFFFFF](ip);
 	}
+}
+
+pub fn debug_show_registers() void {
+	const stdout = std.io.getStdOut().writer();
+	stdout.print(",---------------------.\n", .{}) catch unreachable;
+	stdout.print("| r0: {x:016} |\n", .{vm.words[vm.r0/8]}) catch unreachable;
+	stdout.print("| r1: {x:016} |\n", .{vm.words[vm.r1/8]}) catch unreachable;
+	stdout.print("| r2: {x:016} |\n", .{vm.words[vm.r2/8]}) catch unreachable;
+	stdout.print("| r3: {x:016} |\n", .{vm.words[vm.r3/8]}) catch unreachable;
+	stdout.print("| \x1b[1;31mip: {x:016}\x1b[0m |\n", .{vm.words[vm.ip/8]*8}) catch unreachable;
+	stdout.print("`----------------------'\n\n\n\n", .{}) catch unreachable;
+}
+
+pub fn debug_show_instructions() void {
+	const stdout = std.io.getStdOut().writer();
+	stdout.print(",-----------------------------------------------------.\n", .{}) catch unreachable;
+	var inst_start = vm.words[vm.ip/8];
+	if (inst_start < 16){
+		inst_start = 0;
+	}
+	else {
+		inst_start -= 16;
+	}
+	const inst_end = inst_start+32;
+	while (inst_start < inst_end): (inst_start += 2){
+		stdout.print("| ", .{}) catch unreachable;
+		if (inst_start == vm.words[vm.ip/8]){
+			stdout.print("\x1b[1;31m", .{}) catch unreachable;
+		}
+		stdout.print("{x:016}: {x:016} {x:016}", .{inst_start*8, vm.words[inst_start], vm.words[inst_start+1]}) catch unreachable;
+		if (inst_start == vm.words[vm.ip/8]){
+			stdout.print("\x1b[0m", .{}) catch unreachable;
+		}
+		stdout.print(" |\n",.{}) catch unreachable;
+	}
+	stdout.print("`-----------------------------------------------------'\n", .{}) catch unreachable;
+}
+
+pub fn debug_show_instruction_ref_path(ip: u64) void {
+	const stdout = std.io.getStdOut().writer();
+	const inst_a = vm.words[ip];
+	const inst_b = vm.words[ip+1];
+	const a = inst_a >> 32;
+	const b = (inst_b & 0xFFFFFFFF);
+	const c = inst_b >> 32;
+	stdout.print("                           ,--------------------------------------------------.\n", .{}) catch unreachable;
+	debug_show_ref_path(a);
+	debug_show_ref_path(b);
+	debug_show_ref_path(c);
+	stdout.print("                           `--------------------------------------------------'\n", .{}) catch unreachable;
+}
+
+pub fn debug_show_ref_path(lit: u64) void {
+	const stdout = std.io.getStdOut().writer();
+	var ref:u64 = 0;
+	var deref:u64 = 0;
+	if (lit/8 < vm.words.len){
+		ref = vm.words[lit/8];
+	}
+	if (ref < vm.words.len){
+		deref = vm.words[ref/8];
+	}
+	stdout.print("                           | {x:08} -> {x:016} -> {x:016} |\n", .{lit, ref, deref}) catch unreachable;
 }
 
 pub fn mov_ii_bytes(ip: *align(1) u64) bool{
@@ -6904,5 +6964,6 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
-
-//TODO metaprogram parse operation as an interrupt
+	//breakpoints
+	//stepthrough
+	//backtrack
