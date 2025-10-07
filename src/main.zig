@@ -776,10 +776,6 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), progra
 			token_index.* += 1;
 			continue;
 		}
-		const token_index_copy = token_index.*;
-		if (debug){
-			std.debug.print("{}\n", .{token_index_copy});
-		}
 		if (try parse_bind(mem, tokens.items, token_index)) |bind| {
 			done = false;
 			program.binds.append(bind)
