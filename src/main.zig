@@ -1289,7 +1289,7 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 			if (new_index >= tokens.len){
 				return PatternError.UnexpectedEOF; 
 			}
-			return ArgTree.init(mem, name, tokens[new_index..new_index+1]);
+			return ArgTree.init(mem, name, tokens[token_index..new_index+1]);
 		},
 		.keyword => {
 			if (pattern.keyword.tag == .LINE_END){
@@ -1956,8 +1956,18 @@ pub fn concat_pass(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: 
 			continue;
 		}
 		concatenated = true;
-		const left = program.items[index];
-		const right = program.items[index+2];
+		var left = program.items[index];
+		var offset: u64 = 1;
+		while (left.tag == .SPACE or left.tag == .TAB or left.tag == .NEW_LINE){
+			left = program.items[index-offset];
+			offset += 1;
+		}
+		var right = program.items[index+2];
+		offset = 1;
+		while (right.tag == .SPACE or right.tag == .TAB or right.tag == .NEW_LINE){
+			right = program.items[index+offset];
+			offset += 1;
+		}
 		const together = mem.alloc(u8, left.text.len+right.text.len)
 			catch unreachable;
 		var i:u64 = 0;
@@ -1971,7 +1981,7 @@ pub fn concat_pass(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: 
 		}
 		new.append(Token{.tag=.IDENTIFIER,.text=together, .hoist_data=null})
 			catch unreachable;
-		index += 3;
+		index += 3+offset;
 	}
 	while (index < program.items.len) : (index += 1){
 		new.append(program.items[index])
