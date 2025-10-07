@@ -2836,6 +2836,10 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 			token_index.* += 1;
 			token = tokens.items[token_index.*];
 			token_index.* += 1;
+			while (token.tag == .SPACE or token.tag == .TAB or token.tag == .NEW_LINE){
+				token = tokens.items[token_index.*];
+				token_index.* += 1;
+			}
 			if (token.tag != .IDENTIFIER) {
 				std.debug.print("Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
 				return ParseError.UnexpectedToken;
@@ -2890,6 +2894,10 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 			token_index.* += 1;
 			token = tokens.items[token_index.*];
 			token_index.* += 1;
+			while (token.tag == .SPACE or token.tag == .TAB or token.tag == .NEW_LINE){
+				token = tokens.items[token_index.*];
+				token_index.* += 1;
+			}
 			if (token.tag != .IDENTIFIER) {
 				std.debug.print("Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
 				return ParseError.UnexpectedToken;
