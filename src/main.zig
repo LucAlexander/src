@@ -2,7 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
-const debug = false;
+const debug = true;
 
 const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -761,7 +761,7 @@ pub fn show_tokens(tokens: Buffer(Token)) void {
 		if (token.hoist_data) |_| {
 			std.debug.print("* ", .{});
 		}
-		std.debug.print("{} {s}\n", .{token.tag, token.text});
+		std.debug.print("{s} ", .{token.text});
 	}
 	std.debug.print("\n", .{});
 }
@@ -1294,7 +1294,8 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 		.keyword => {
 			if (pattern.keyword.tag == .LINE_END){
 				if (tokens[token_index].tag == .NEW_LINE){
-					return ArgTree.init(mem, name, tokens[token_index..token_index+1]);
+					const slice_dup = mem.dupe(Token, tokens[token_index..token_index+1]) catch unreachable;
+					return ArgTree.init(mem, name, slice_dup);
 				}
 				return PatternError.MissingKeyword;
 			}
@@ -1302,7 +1303,8 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 				if (tokens[token_index].tag == .NEW_LINE or
 					tokens[token_index].tag == .SPACE or
 					tokens[token_index].tag == .TAB){
-					return ArgTree.init(mem, name, tokens[token_index..token_index+1]);
+					const slice_dup = mem.dupe(Token, tokens[token_index..token_index+1]) catch unreachable;
+					return ArgTree.init(mem, name, slice_dup);
 				}
 				return PatternError.MissingKeyword;
 			}
@@ -1311,7 +1313,8 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 				return PatternError.UnexpectedEOF; 
 			}
 			if (token_equal(&tokens[new_index], &pattern.keyword)){
-				return ArgTree.init(mem, name, tokens[token_index..new_index+1]);
+				const slice_dup = mem.dupe(Token, tokens[token_index..new_index+1]) catch unreachable;
+				return ArgTree.init(mem, name, slice_dup);
 			}
 			return PatternError.MissingKeyword;
 		},
@@ -1331,7 +1334,8 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 						temp_index += seq.expansion_len;
 					}
 				}
-				const tree = ArgTree.init(mem, name, tokens[token_index..temp_index]);
+				const slice_dup = mem.dupe(Token, tokens[token_index..token_index+1]) catch unreachable;
+				const tree = ArgTree.init(mem, name, slice_dup);
 				tree.nodes = list;
 				tree.alternate=alt;
 				return tree;
@@ -1364,7 +1368,8 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 				}
 				break;
 			}
-			const tree = ArgTree.init(mem, name, tokens[after_first..before_last]);
+			const slice_dup = mem.dupe(Token, tokens[after_first..before_last]) catch unreachable;
+			const tree = ArgTree.init(mem, name, slice_dup);
 			tree.expansion_len = temp_index-token_index;
 			tree.nodes = list;
 			return tree;
@@ -1395,7 +1400,8 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 				}
 				break;
 			}
-			const tree = ArgTree.init(mem, name, convert_bytesequence(mem, tokens[after_first..before_last]));
+			const slice_dup = mem.dupe(Token, tokens[after_first..before_last]) catch unreachable;
+			const tree = ArgTree.init(mem, name, convert_bytesequence(mem, slice_dup));
 			tree.expansion_len = temp_index-token_index;
 			tree.nodes = list;
 			return tree;
@@ -1415,7 +1421,8 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 						}
 						superlist.append(sublist)
 							catch unreachable;
-						const tree = ArgTree.init(mem, name, tokens[token_index..save_index]);
+						const slice_dup = mem.dupe(Token, tokens[token_index..save_index]) catch unreachable;
+						const tree = ArgTree.init(mem, name, slice_dup);
 						for (superlist.items) |list| {
 							const subtree = ArgTree.init(mem, name, null);
 							subtree.nodes = list;
@@ -1435,7 +1442,8 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 				const sep_sequence = apply_rule(mem, uniques, pattern.variadic.separator.?, tokens, temp_index, var_depth+1) catch {
 					superlist.append(sublist)
 						catch unreachable;
-					const tree = ArgTree.init(mem, name, tokens[token_index..temp_index]);
+					const slice_dup = mem.dupe(Token, tokens[token_index..temp_index]) catch unreachable;
+					const tree = ArgTree.init(mem, name, slice_dup);
 					for (superlist.items) |list| {
 						const subtree = ArgTree.init(mem, name, null);
 						subtree.nodes = list;
@@ -3031,11 +3039,12 @@ pub fn fill_hoist(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *
 						new.items.len = index-1;
 						var stack = Buffer(*ArgTree).init(mem.*);
 						_ = try rewrite_hoist(mem, binds, hoist, new, 0, false, false, &stack);
-						for (temp.items) |relay| {
-							new.append(relay)
-								catch unreachable;
-						}
+						new.appendSlice(temp.items) catch unreachable;
 						found = true;
+						if (debug){
+							std.debug.print("hoisted once\n", .{});
+						}
+						show_tokens(new.*);
 						break;
 					}
 					unreachable;
