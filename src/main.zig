@@ -2,9 +2,9 @@ const std = @import("std");
 const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
-const debug = true;
+const debug = false;
 
-const uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+var uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 var iden_hashes = std.StringHashMap(u64).init(std.heap.page_allocator);
 var current_iden: u64 = 0;
@@ -1289,7 +1289,8 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 			if (new_index >= tokens.len){
 				return PatternError.UnexpectedEOF; 
 			}
-			return ArgTree.init(mem, name, tokens[token_index..new_index+1]);
+			const slice_dup = mem.dupe(Token, tokens[token_index..new_index+1]) catch unreachable;
+			return ArgTree.init(mem, name, slice_dup);
 		},
 		.keyword => {
 			if (pattern.keyword.tag == .LINE_END){
@@ -2193,6 +2194,7 @@ pub fn new_uid(mem: *const std.mem.Allocator) []u8 {
 	while (i < new.len) {
 		if (uid[i] < 'Z'){
 			new[i] = uid[i]+1;
+			i += 1;
 			break;
 		}
 		new[i] = 'A';
@@ -2206,6 +2208,7 @@ pub fn new_uid(mem: *const std.mem.Allocator) []u8 {
 		new[i] = uid[i];
 		i += 1;
 	}
+	uid = new;
 	return new;
 }
 
@@ -2274,6 +2277,7 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 		token_index.* += 1;
 		switch (token.tag){
 			.COMP_START => {
+				const comp_stack = comp_section;
 				comp_section = true;
 				if (debug){
 					std.debug.print("Entering comp segment\n", .{});
@@ -2286,7 +2290,7 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				if (debug){
 					std.debug.print("Exiting comp segment\n", .{});
 				}
-				comp_section = false;
+				comp_section = comp_stack;
 				continue;
 			},
 			.COMP_END => {
@@ -2380,6 +2384,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 			var op: ?Instruction = null;
 			switch (token.tag){
 				.COMP_START => {
+					const comp_stack = comp_section;
 					comp_section = true;
 					if (debug) {
 						std.debug.print("Entering comp segment\n", .{});
@@ -2392,7 +2397,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					if (debug) {
 						std.debug.print("Exiting comp segment\n", .{});
 					}
-					comp_section = false;
+					comp_section = comp_stack;
 					continue;
 				},
 				.COMP_END => {
@@ -2403,11 +2408,11 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				},
 				.BIND => {
 					skip_whitespace(tokens.items, token_index) catch {
-						return i;
+						continue :outer;
 					};
 					token_index.* += 1;
 					skip_whitespace(tokens.items, token_index) catch {
-						return i;
+						continue :outer;
 					};
 					const name = tokens.items[token_index.*];
 					token_index.* += 1;
@@ -2416,7 +2421,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 						return ParseError.UnexpectedToken;
 					}
 					skip_whitespace(tokens.items, token_index) catch {
-						return i;
+						continue :outer;
 					};
 					if (tokens.items[token_index.*].tag != .EQUAL){
 						std.debug.print("Expected = for transfer bind, found {s}\n", .{tokens.items[token_index.*].text});
@@ -2424,7 +2429,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					}
 					token_index.* += 1;
 					skip_whitespace(tokens.items, token_index) catch {
-						return i;
+						continue :outer;
 					};
 					const is_ip = tokens.items[token_index.*];
 					if (is_ip.tag == .IP){
@@ -3217,16 +3222,18 @@ pub fn interpret(start:u64) void {
 	var running = true;
 	while (running) {
 		if (debug){
-			const stdout = std.io.getStdOut().writer();
-			stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
-			debug_show_instruction_ref_path(vm.words[vm.ip/8]);
-			debug_show_instruction_ref_path(vm.words[vm.ip/8]-2);
-			stdout.print("\x1b[H", .{}) catch unreachable;
-			debug_show_registers();
-			debug_show_instructions();
-			var stdin = std.io.getStdIn().reader();
-			var buffer: [1]u8 = undefined;
-			_ = stdin.read(&buffer) catch unreachable;
+			if (!comp_section){
+				const stdout = std.io.getStdOut().writer();
+				stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
+				debug_show_instruction_ref_path(vm.words[vm.ip/8]);
+				debug_show_instruction_ref_path(vm.words[vm.ip/8]-2);
+				stdout.print("\x1b[H", .{}) catch unreachable;
+				debug_show_registers();
+				debug_show_instructions();
+				var stdin = std.io.getStdIn().reader();
+				var buffer: [1]u8 = undefined;
+				_ = stdin.read(&buffer) catch unreachable;
+			}
 		}
 		running = ops[vm.words[ip.*]&0xFFFFFFFF](ip);
 	}
