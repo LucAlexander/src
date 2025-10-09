@@ -2117,7 +2117,7 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 								}
 							}
 						}
-						index = try rewrite(mem, outer_binds, current, new, index, false, true, stack);
+						index = try rewrite_hoist(mem, outer_binds, current, new, index, false, true, stack);
 						var depth: u64 = 0;
 						while (index < current_bind.hoist.items.len) : (index += 1){
 							if (current_bind.hoist.items[index].tag == .OPEN_BRACK){
@@ -2142,6 +2142,49 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 				}
 				continue :outer;
 			}
+			if (arg.arg.pattern == Pattern.byte_group){
+				if (index < current_bind.hoist.items.len){
+					if (current_bind.hoist.items[index+1].tag == .OPEN_BRACE){
+						const save_index = index+2;
+						const byte_token = current_bind.hoist.items[save_index];
+						for (0..arg.expansion.?[0].text.len) |i| {
+							const byte_arg = Arg{
+								.tag=.inclusion,
+								.name=byte_token,
+								.pattern=Pattern {
+									.keyword=byte_token
+								}
+							};
+							const byte_expansion_token = mem.alloc(Token, 2) catch unreachable;
+							const lit_buf = mem.alloc(u8, 1) catch unreachable;
+							lit_buf[0] = '!';
+							byte_expansion_token[0] = Token{
+								.tag=.LIT,
+								.text=lit_buf,
+								.hoist_data = null
+							};
+							byte_expansion_token[1] = Token{
+								.tag=.IDENTIFIER,
+								.text=to_byte_token_slice(mem, arg.expansion.?[0].text[i]),
+								.hoist_data = null
+							};
+							const byte_application = ArgTree.init(mem, byte_arg, byte_expansion_token);
+							stack.append(byte_application)
+								catch unreachable;
+							index = try rewrite_hoist(mem, outer_binds, current, new, save_index+1, true, false, stack);
+							_ = stack.pop();
+						}
+						continue :outer;
+					}
+				}
+				std.debug.assert(arg.expansion != null);
+				for (arg.expansion.?) |*tok| {
+					const tmp_tok = tok.*;
+					new.append(tmp_tok)
+						catch unreachable;
+				}
+				continue :outer;
+			}
 			if (arg.arg.pattern == Pattern.variadic){
 				if (index < current_bind.hoist.items.len){
 					if (current_bind.hoist.items[index+1].tag == .OPEN_BRACE){
@@ -2151,7 +2194,7 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 								stack.append(iter_arg)
 									catch unreachable;
 							}
-							index = try rewrite(mem, outer_binds, current, new, save_index+1, true, false, stack);
+							index = try rewrite_hoist(mem, outer_binds, current, new, save_index+1, true, false, stack);
 							std.debug.assert(current_bind.hoist.items.len-1 == index);
 							for (iter.nodes.items) |_| {
 								_ = stack.pop();
