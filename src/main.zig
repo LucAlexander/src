@@ -2,7 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
-const debug = false;
+const debug = true;
 
 var uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -2367,7 +2367,10 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				skip_whitespace(tokens.items, token_index) catch {
 					return output;
 				};
+				const comp_stack = comp_section;
+				comp_section = true;
 				const loc = try parse_location(mem, tokens, token_index);
+				comp_section = comp_stack;
 				const val = val64(loc) catch |err| {
 					std.debug.print("Encountered error in Persistence binding: {}\n", .{err});
 					return ParseError.UnexpectedToken;
@@ -2411,7 +2414,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 	var labels = std.StringHashMap(u64).init(mem.*);
 	const index_save = token_index.*;
 	var i: u64 = 0;
-	outer: for (0..2) |_| {
+	outer: for (0..2) |pass| {
 		i = 0;
 		token_index.* = index_save;
 		while (token_index.* < tokens.items.len){
@@ -2436,9 +2439,11 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					if (debug) {
 						std.debug.print("Parsed comp segment\n", .{});
 					}
-					interpret(start_ip);
-					if (debug) {
-						std.debug.print("Exiting comp segment\n", .{});
+					if (pass == 0){
+						interpret(start_ip);
+						if (debug) {
+							std.debug.print("Exiting comp segment\n", .{});
+						}
 					}
 					comp_section = comp_stack;
 					continue;
@@ -2477,30 +2482,37 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					const is_ip = tokens.items[token_index.*];
 					if (is_ip.tag == .IP){
 						token_index.* += 1;
-						labels.put(name.text, (i/8)+(start_ip/8))
-							catch unreachable;
+						if (pass == 0){
+							labels.put(name.text, (i/8)+(start_ip/8))
+								catch unreachable;
+						}
 						continue;
 					}
+					const comp_stack = comp_section;
+					comp_section = true;
 					const loc = try parse_location(mem, tokens, token_index);
+					comp_section = comp_stack;
 					const val = val64(loc) catch |err| {
 						std.debug.print("Encountered error in Persistence binding: {}\n", .{err});
 						return ParseError.UnexpectedToken;
 					};
-					if (comp){
-						if (debug){
-							std.debug.print("comp persistent put {s} : {}\n", .{name.text, val});
+					if (pass == 0){
+						if (comp){
+							if (debug){
+								std.debug.print("comp persistent put {s} : {}\n", .{name.text, val});
+							}
+							comp_persistent.put(name.text, val)
+								catch unreachable;
+							persistent.put(name.text, val)
+								catch unreachable;
 						}
-						comp_persistent.put(name.text, val)
-							catch unreachable;
-						persistent.put(name.text, val)
-							catch unreachable;
-					}
-					else{
-						if (debug){
-							std.debug.print("persistent put {s} : {}\n", .{name.text, val});
+						else{
+							if (debug){
+								std.debug.print("persistent put {s} : {}\n", .{name.text, val});
+							}
+							persistent.put(name.text, val)
+								catch unreachable;
 						}
-						persistent.put(name.text, val)
-							catch unreachable;
 					}
 					continue;
 				},
