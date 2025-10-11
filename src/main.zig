@@ -2,7 +2,7 @@ const std = @import("std");
 const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
-const debug = true;
+const debug = false;
 
 var uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
@@ -6431,8 +6431,9 @@ pub fn cmp_ii_bytes(ip: *align(1) u64) bool {
 
 pub fn cmp_il_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
-	const left = (args & 0xFFFFFFFF);
+	const left_name = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
+	const left = vm.words[left_name >> 3];
 	const right = vm.words[right_name >> 3];
 	if (left > right){
 		vm.mem[vm.sr] = 1;
