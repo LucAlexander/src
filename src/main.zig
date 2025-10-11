@@ -1094,6 +1094,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index
 	}
 	const open_loc = mem.create(Arg)
 		catch unreachable;
+	try skip_whitespace(tokens, token_index);
 	open_loc.* = try parse_arg(mem, tokens, token_index);
 	try skip_whitespace(tokens, token_index);
 	if (tokens[token_index.*].tag != .ELIPSES){
