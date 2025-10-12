@@ -7055,6 +7055,200 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 	}
 }
 
+const Pattern = struct {
+	name: Token,
+	constructors: Buffer(Constructor)
+};
+
+const Constructor = struct {
+	name: Token,
+	fields: Buffer(Field)
+};
+
+const Field = union(enum) {
+	identifier,
+	literal: Buffer(Token),
+	pattern: Pattern
+};
+
+const Arg = union(enum) {
+	constructor: struct {
+		name: Token,
+		arg: Token,
+	},
+	pattern: struct {
+		field: Field,
+		arg: Token
+	},
+	literal: Buffer(Token)
+};
+
+const Bind = struct {
+	name: Buffer(Arg),
+	hoist_field: ?Arg,
+	hoist: ?Buffer(Token),
+	expansion: Buffer(Token),
+	where: Buffer(Bind),
+
+	pub fn init(mem: *const std.mem.Allocator) Bind {
+		return Bind{
+			.name = Buffer(Field).init(mem.*),
+			.hoist_fild = null,
+			.hoist = null,
+			.expansion = Buffer(Token).init(mem.*),
+			.where = Buffer(Bind).init(mem.*)
+		};
+	}
+};
+
+const State = struct {
+	binds: Buffer(Bind),
+	program: Buffer(Token),
+
+	pub fn init(mem: *const std.mem.Allocator) State {
+		return State{
+			.binds = Buffer(Bind).init(mem.*),
+			.program = Buffer(Token).init(mem.*)
+		};
+	}
+};
+
+//TODO whitespace handling
+pub fn parse_binds(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!State {
+	var new = State.init(mem);
+	while (token_index.* < state.program.items.size){
+		const token = state.program.items[token_index.*];
+		if (token.tag == .BIND){
+			state.binds.append(try parse_bind(mem, state, token_index))
+				catch unreachable;
+			continue;
+		}
+		new.state.program.append(token);
+		token_index.* += 1;
+	}
+}
+
+pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!Bind {
+	const bind_token = state.program.items[token_index.*];
+	std.debug.assert(bind_token.tag == .BIND);
+	var bind = Bind.init(mem);
+	while (token_index.* < state.program.items.size){
+		const token = state.program.items[token_index.*];
+		if (token.tag == .EQUALS){
+			token_index.* += 1;
+			break;
+		}
+		bind.name.append(try parse_arg(mem, state, token_index))
+			catch unreachable;
+	}
+	const noteq = state.program.items[token_index.*];
+	std.debug.assert(noteq.tag != .EQUALS);
+	while (token_index.* < state.program.items.size){
+		const token = state.program.items([token_index.*];
+		if (token.tag == .HOIST){
+			bind.hoist_field = try parse_field(mem, state, token_index);
+			bind.hoist = bind.expansion;
+			bind.expansion = Buffer(Token).init(mem.*);
+			token_index.* += 1;
+			continue;
+		}
+		//TODO check if is arg and replace
+		bind.expansion.append(token)
+			catch unreachable;
+	}
+}
+
+pub fn parse_arg(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!Arg {
+	const open = state.program.items[token_index.*];
+	if (token.tag == .OPEN_PAREN) {
+		token_index.* += 1;
+		const save_index = token_index.*;
+		const field = try parse_field(mem, state, token_index) catch {
+			token_index.* = save_index;
+			var arg = Arg {
+				.constructor = .{
+					.name = state.program.items[token_index.*],
+					.arg = state.program.items[token_index.*+1];
+				}
+			};
+			token_index.* += 3;
+			const token = state.program.items[token_index.*];
+			std.debug.assert(token.tag != .CLOSE_PAREN);
+			return arg;
+		};
+		var arg = Arg {
+			.pattern = .{
+				field = field,
+				.arg = state.program.items[token_index.*];
+			}
+		};
+		token_index.* += 1;
+		const token = state.program.items[token_index.*];
+		std.debug.assert(token.tag != .CLOSE_PAREN);
+		token_index.* += 1;
+		return arg;
+	}
+	else if (token.tag == .QUOTE) {
+		var arg = Arg{
+			.literal = Buffer(Token).init(mem.*)
+		};
+		token_index.* += 1;
+		while (token_index.* < state.program.items.size){
+			const token = state.program.items[token_index.*];
+			if (token.tag == .QUOTE){
+				token_index.* += 1;
+				break;
+			}
+			arg.literal.append(token)
+				catch unreachable;
+			token_index.* += 1;
+		}
+		return arg;
+	}
+	std.debug.print("Expected ( or ' to open argument, found {}\n", .{token.text});
+	return ParseError.UnexpectedToken;
+}
+
+pub fn parse_field(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!Field {
+	const token = state.program.items[token_index.*];
+	token_index.* += 1;
+	switch (token.tag){
+		.ANY => {
+			return Field {.idenfitier=.{}};
+		},
+		.QUOTE => {
+			var field = Field{
+				.literal=Buffer(Token).init(mem)
+			};
+			while (token_index.* != state.program.items.size){
+				const token = state.program.items[token_index.*];
+				if (token.tag == .QUOTE){
+					token_index.* += 1;
+					break;
+				}
+				field.literal.append(token)
+					catch unreachable;
+				token_index.* += 1;
+			}
+			return field;
+		},
+		.OPEN_PAREN => {
+			return Field{
+				.pattern = try parse_pattern(mem, state, token_index.*, .CLOSE_PAREN)
+			};
+		},
+		else => {
+			std.debug.print("Expected * ' or ( to open field, found {}\n", .{token.text});
+			return ParseError.UnexpectedToken;
+		}
+	}
+	unreachable;
+}
+
+pub fn parse_pattern(mem: *const std.mem.Allocator, state: *State, token_index: *u64, end: TOKEN) ParseError!Pattern {
+	//TODO
+}
+
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 	//breakpoints
