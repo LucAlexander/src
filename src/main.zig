@@ -7055,10 +7055,12 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 	}
 }
 
-const Pattern = struct {
+const PatternDef = struct {
 	name: Token,
-	constructors: Buffer(Constructor)
+	constructors: Pattern
 };
+
+const Pattern = Buffer(Constructor);
 
 const Constructor = struct {
 	name: Token,
@@ -7103,36 +7105,54 @@ const Bind = struct {
 
 const State = struct {
 	binds: Buffer(Bind),
+	patterns: Buffer(PatternDef),
 	program: Buffer(Token),
 
 	pub fn init(mem: *const std.mem.Allocator) State {
 		return State{
 			.binds = Buffer(Bind).init(mem.*),
+			.patterns: Buffer(PatternDef).init(mem.*),
 			.program = Buffer(Token).init(mem.*)
 		};
 	}
 };
 
-//TODO whitespace handling
-pub fn parse_binds(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!State {
-	var new = State.init(mem);
-	while (token_index.* < state.program.items.size){
+pub fn pass_whitespace(state: *State, token_index: *u64){
+	while (token_index.* < state.program.items.len){
 		const token = state.program.items[token_index.*];
-		if (token.tag == .BIND){
-			state.binds.append(try parse_bind(mem, state, token_index))
-				catch unreachable;
-			continue;
+		if (token.tag != .SPACE and token.tag != .TAB and token.tag != .NEW_LINE){
+			return;
 		}
-		new.state.program.append(token);
 		token_index.* += 1;
 	}
 }
 
+pub fn parse_binds(mem: *const std.mem.Allocator, state: *State) ParseError!State {
+	var new = State.init(mem);
+	var token_index: u64 = 0;
+	while (token_index < state.program.items.len){
+		pass_whitespace(state, token_index);
+		const token = state.program.items[token_index];
+		if (token.tag == .BIND){
+			state.binds.append(try parse_bind(mem, state, &token_index))
+				catch unreachable;
+			continue;
+		}
+		else if (token.tag == .PATTERN){
+			state.patterns.append(try parse_pattern_def(mem, state, &token_index))
+		}
+		new.state.program.append(token);
+		token_index += 1;
+	}
+}
+
 pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!Bind {
+	pass_whitespace(state, token_index);
 	const bind_token = state.program.items[token_index.*];
 	std.debug.assert(bind_token.tag == .BIND);
 	var bind = Bind.init(mem);
-	while (token_index.* < state.program.items.size){
+	while (token_index.* < state.program.items.len){
+		pass_whitespace(state, token_index);
 		const token = state.program.items[token_index.*];
 		if (token.tag == .EQUALS){
 			token_index.* += 1;
@@ -7141,9 +7161,11 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 		bind.name.append(try parse_arg(mem, state, token_index))
 			catch unreachable;
 	}
+	pass_whitespace(state, token_index);
 	const noteq = state.program.items[token_index.*];
 	std.debug.assert(noteq.tag != .EQUALS);
-	while (token_index.* < state.program.items.size){
+	while (token_index.* < state.program.items.len){
+		pass_whitespace(state, token_index);
 		const token = state.program.items([token_index.*];
 		if (token.tag == .HOIST){
 			bind.hoist_field = try parse_field(mem, state, token_index);
@@ -7152,37 +7174,45 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 			token_index.* += 1;
 			continue;
 		}
-		//TODO check if is arg and replace
 		bind.expansion.append(token)
 			catch unreachable;
 	}
 }
 
 pub fn parse_arg(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!Arg {
+	pass_whitespace(state, token_index);
 	const open = state.program.items[token_index.*];
 	if (token.tag == .OPEN_PAREN) {
 		token_index.* += 1;
 		const save_index = token_index.*;
 		const field = try parse_field(mem, state, token_index) catch {
 			token_index.* = save_index;
+			pass_whitespace(state, token_index);
+			const name = state.program.items[token_index.*];
+			token_index += 1;
+			pass_whitespace(state, token_index);
+			const arg = state.program.items[token_index.*];
 			var arg = Arg {
 				.constructor = .{
 					.name = state.program.items[token_index.*],
 					.arg = state.program.items[token_index.*+1];
 				}
 			};
-			token_index.* += 3;
+			token_index.* += 1;
+			pass_whitespace(state, token_index);
 			const token = state.program.items[token_index.*];
 			std.debug.assert(token.tag != .CLOSE_PAREN);
 			return arg;
 		};
 		var arg = Arg {
+			pass_whitespace(state, token_index);
 			.pattern = .{
 				field = field,
 				.arg = state.program.items[token_index.*];
 			}
 		};
 		token_index.* += 1;
+		pass_whitespace(state, token_index);
 		const token = state.program.items[token_index.*];
 		std.debug.assert(token.tag != .CLOSE_PAREN);
 		token_index.* += 1;
@@ -7193,7 +7223,7 @@ pub fn parse_arg(mem: *const std.mem.Allocator, state: *State, token_index: *u64
 			.literal = Buffer(Token).init(mem.*)
 		};
 		token_index.* += 1;
-		while (token_index.* < state.program.items.size){
+		while (token_index.* < state.program.items.len){
 			const token = state.program.items[token_index.*];
 			if (token.tag == .QUOTE){
 				token_index.* += 1;
@@ -7205,11 +7235,12 @@ pub fn parse_arg(mem: *const std.mem.Allocator, state: *State, token_index: *u64
 		}
 		return arg;
 	}
-	std.debug.print("Expected ( or ' to open argument, found {}\n", .{token.text});
+	std.debug.print("Expected ( or ' to open argument, found {s}\n", .{token.text});
 	return ParseError.UnexpectedToken;
 }
 
 pub fn parse_field(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!Field {
+	pass_whitespace(state, token_index);
 	const token = state.program.items[token_index.*];
 	token_index.* += 1;
 	switch (token.tag){
@@ -7220,7 +7251,7 @@ pub fn parse_field(mem: *const std.mem.Allocator, state: *State, token_index: *u
 			var field = Field{
 				.literal=Buffer(Token).init(mem)
 			};
-			while (token_index.* != state.program.items.size){
+			while (token_index.* != state.program.items.len){
 				const token = state.program.items[token_index.*];
 				if (token.tag == .QUOTE){
 					token_index.* += 1;
@@ -7238,15 +7269,162 @@ pub fn parse_field(mem: *const std.mem.Allocator, state: *State, token_index: *u
 			};
 		},
 		else => {
-			std.debug.print("Expected * ' or ( to open field, found {}\n", .{token.text});
+			std.debug.print("Expected * ' or ( to open field, found {s}\n", .{token.text});
 			return ParseError.UnexpectedToken;
 		}
 	}
 	unreachable;
 }
 
+pub fn parse_constructor(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!Constructor {
+	pass_whitespace(state, token_index);
+	const name = state.program.items[token_index.*];
+	if (name.tag != .IDENTIFIER){
+		std.debug.print("Expected identifier for constructor name, found {s}\n", .{name.text});
+		return ParseError.UnexpectedToken;
+	}
+	token_index.* += 1;
+	var cons = Constructor{
+		.name = name,
+		.fields = Buffer(Field).init(mem.*)
+	};
+	while (token_index.* < state.program.items.len){
+		pass_whitespace(state, token_index);
+		const token = state.program.items[token_index.*];
+		if (token.tag == .SEMI || token.tag == .PIPE || token.tag == .CLOSE_PAREN){
+			return cons;
+		}
+		cons.fields.append(try parse_field(mem, state, token_index))
+			catch unreachable;
+	}
+	return cons;
+}
+
 pub fn parse_pattern(mem: *const std.mem.Allocator, state: *State, token_index: *u64, end: TOKEN) ParseError!Pattern {
+	var pattern = Buffer(Constructor).init(mem.*);
+	while (token_index.* < state.program.items.len){
+		pattern.append(try parse_constructor(mem, state, token_index))
+			catch unreachable;
+		pass_whitespace(state, token_index);
+		const token = state.program.items[token_index.*];
+		if (token.tag == end){
+			token_index.* += 1;
+			return pattern;
+		}
+		else if (token.tag == .PIPE){
+			token_index.* += 1;
+			continue;
+		}
+		else{
+			std.debug.print("Unexpected token between pattern constructors: {s}\n", .{token.text});
+			return ParseError.UnexpectedToken;
+		}
+	}
+	unreachable;
+}
+
+pub fn parse_pattern_def(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!PatternDef {
+	const token = state.program.items[token_index.*];
+	std.debug.assert(token.tag == .PATTERN);
+	token_index.* += 1;
+	pass_whitespace(state, token_index);
+	const name = state.program.items[token_index.*];
+	if (name.tag != .IDENTIFIER){
+		std.debug.print("Expected identifier for pattern definition name, found {s}\n", .{name.text});
+		return ParseError.UnexpectedToken;
+	}
+	token_index.* += 1;
+	pass_whitespace(state, token_index);
+	const eq = state.program.items[token_index.*];
+	if (eq.teg != .EQUALS){
+		std.debug.print("Expected = for pattern defintion set, found {s}\n", .{eq.text});
+		return ParseError.UnexpetedToken;
+	}
+	token_index.* += 1;
+	return PatternDef{
+		.name=name,
+		.pattern = try parse_pattern(mem, state, token_index, .SEMI)
+	};
+}
+
+pub fn show_state(state: *State) void {
+	for (state.binds) |*bind| {
+		show_bind(bind);
+	}
+	for (state.patterns) |*pattern| {
+		show_pattern_def(pattern);
+	}
+	show_tokens(state.program);
+}
+
+pub fn show_bind(bind: *Bind) void {
+	std.debug.print("bind ", {});
+	var index: u64 = 0;
+	while (index < bind.name.items.len){
+		show_arg(&bind.name[index]);
+	}
+	std.debug.print(" =\n   ", .{});
 	//TODO
+}
+
+pub fn show_arg(arg: *Arg) void {
+	switch (arg){
+		.constructor => {
+			std.debug.print("( {s} {s} ) ", .{arg.constructor.name.text, arg.constructor.text});
+		},
+		.pattern => {
+			show_field(&arg.pattern.field);
+			std.debug.print("{} ", .{arg.pattern.arg});
+		},
+		.literal => {
+			std.debug.print("'", .{});
+			for (arg.literal) |tok|{
+				std.debug.print("{s}", .{tok.text});
+			}
+			std.debug.print("' ", .{});
+		}
+	}
+}
+
+pub fn show_field(field: *Field) void {
+	switch (field){
+		.identifier => {
+			std.debug.print("* ", .{});
+		},
+		.literal => {
+			std.debug.print("'", .{});
+			for (field.literal) |tok|{
+				std.debug.print("{s}", .{tok.text});
+			}
+			std.debug.print("' ", .{});
+		},
+		.pattern => {
+			show_pattern(&field.pattern);
+		}
+	}
+}
+
+pub fn show_pattern(pattern: *Pattern) void {
+	var index: u64 = 0;
+	while (index < pattern.items.len){
+		if (index != 0){
+			std.debug.print("| ", .{});
+		}
+		show_constructor(&pattern.items[index]);
+		index += 1;
+	}
+}
+
+pub fn show_constructor(cons: *Constructor) void {
+	std.debug.print("{s} ", .{cons.name});
+	for (cons.fields) |*f| {
+		show_field(f);
+	}
+}
+
+pub fn show_pattern_def(def: PatternDef) void {
+	std.debug.print("pattern {s} = ", .{def.name});
+	show_pattern(&def.pattern);
 }
 
 //TODO think about debugging infrastructure
