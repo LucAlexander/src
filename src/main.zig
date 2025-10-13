@@ -548,14 +548,6 @@ const Token = struct {
 	hoist_data: ?Buffer(AppliedBind)
 };
 
-const Arg = struct {
-	tag: enum {
-		unique, inclusion, exclusion, optional
-	},
-	name: Token,
-	pattern: Pattern
-};
-
 const Pattern = union(enum) {
 	token,
 	keyword: Token,
@@ -572,14 +564,6 @@ const Pattern = union(enum) {
 		members: Buffer(*Arg),
 		separator: ?*Arg
 	},
-};
-
-const Bind = struct {
-	precedence: u8,
-	args: Buffer(Arg),
-	hoist: Buffer(Token),
-	hoist_token: ?Arg,
-	text: Buffer(Token)
 };
 
 const ArgTree = struct {
@@ -795,75 +779,6 @@ pub fn parse(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), progra
 	return done;
 }
 
-pub fn parse_bind(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) !?Bind {
-	const token_save = token_index.*;
-	std.debug.assert(tokens[token_index.*].tag == .BIND);
-	var bind = Bind{
-		.precedence=0,
-		.args=Buffer(Arg).init(mem.*),
-		.hoist=Buffer(Token).init(mem.*),
-		.hoist_token=null,
-		.text=Buffer(Token).init(mem.*)
-	};
-	token_index.* += 1;
-	try skip_whitespace(tokens, token_index);
-	const precedence = tokens[token_index.*];
-	if (precedence.tag != .IDENTIFIER){
-		std.debug.print("Expected precedence level\n", .{});
-		return ParseError.UnexpectedToken;
-	}
-	bind.precedence = precedence.text[0];
-	token_index.* += 1;
-	while (token_index.* < tokens.len){
-		try skip_whitespace(tokens, token_index);
-		const token = &tokens[token_index.*];
-		if (token.tag == .OPEN_BRACE or token.tag == .EQUAL){
-			break;
-		}
-		bind.args.append(try parse_arg(mem, tokens, token_index))
-			catch unreachable;
-	}
-	if (bind.args.items.len == 0){
-		std.debug.print("No args provided to bind\n", .{});
-		return ParseError.NoArgs;
-	}
-	try skip_whitespace(tokens, token_index);
-	const eq = tokens[token_index.*];
-	if (eq.tag == .EQUAL){
-		token_index.* = token_save;
-		return null;
-	}
-	else if (eq.tag != .OPEN_BRACE){
-		std.debug.print("Expected open brace to define bind replacement segment, found {s}\n", .{eq.text});
-		return ParseError.UnexpectedToken;
-	}
-	token_index.* += 1;
-	var depth: u64 = 0;
-	while (token_index.* < tokens.len){
-		if (tokens[token_index.*].tag == .CLOSE_BRACE){
-			if (depth == 0){
-				break;
-			}
-			depth -= 1;
-		}
-		else if (tokens[token_index.*].tag == .OPEN_BRACE){
-			depth += 1;
-		}
-		bind.text.append(tokens[token_index.*])
-			catch unreachable;
-		token_index.* += 1;
-		try skip_whitespace(tokens, token_index);
-	}
-	try skip_whitespace(tokens, token_index);
-	if (tokens[token_index.*].tag != .CLOSE_BRACE){
-		std.debug.print("Program ended in the middle of a bind expansion defintion, expected closing brace\n", .{});
-		return ParseError.PrematureEnd;
-	}
-	token_index.* += 1;
-	try split_hoist(mem, &bind);
-	return bind;
-}
-
 pub fn split_hoist(mem: *const std.mem.Allocator, bind: *Bind) ParseError!void {
 	var token_index = bind.text.items.len;
 	while (token_index > 0){
@@ -914,217 +829,6 @@ pub fn skip_whitespace(tokens: []Token, token_index: *u64) ParseError!void {
 	token_index.*-=1;
 	std.debug.print("Encountered end of file in whitespace skip\n", .{});
 	return ParseError.UnexpectedEOF;
-}
-
-pub fn parse_arg(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) ParseError!Arg {
-	if (token_index.* >= tokens.len){
-		std.debug.print("Expected argument or expansion but file ended\n", .{});
-		return ParseError.UnexpectedEOF;
-	}
-	if (tokens[token_index.*].tag == .UNIQUE){
-		token_index.* += 1;
-		if (tokens[token_index.*].tag != .IDENTIFIER){
-			std.debug.print("Expected identifier for unique name, found {s}\n", .{tokens[token_index.*].text});
-			return ParseError.UnexpectedToken;
-		}
-		const arg = Arg {
-			.tag = .unique,
-			.name = tokens[token_index.*],
-			.pattern=Pattern{
-				.keyword=tokens[token_index.*]
-			}
-		};
-		var inner = Buffer(*Arg).init(mem.*);
-		const atloc = mem.create(Arg) catch unreachable;
-		const idenloc = mem.create(Arg) catch unreachable;
-		atloc.* = Arg{
-			.tag=.inclusion,
-			.name=tokens[token_index.*-1],
-			.pattern=Pattern{
-				.keyword=tokens[token_index.*-1]
-			}
-		};
-		idenloc.* = Arg{
-			.tag=.inclusion,
-			.name=tokens[token_index.*],
-			.pattern=Pattern{
-				.keyword=tokens[token_index.*]
-			}
-		};
-		inner.append(atloc)
-			catch unreachable;
-		inner.append(idenloc)
-			catch unreachable;
-		token_index.* += 1;
-		return arg;
-	}
-	if (tokens[token_index.*].tag == .IDENTIFIER or
-		tokens[token_index.*].tag == .WHITESPACE or
-		tokens[token_index.*].tag == .LINE_END){
-		const arg = Arg {
-			.tag = .inclusion,
-			.name=tokens[token_index.*],
-			.pattern=Pattern{
-				.keyword=tokens[token_index.*]
-			}
-		};
-		token_index.* += 1;
-		return arg;
-	}
-	var arg = Arg{
-		.tag = .inclusion,
-		.name=undefined,
-		.pattern=undefined
-	};
-	if (tokens[token_index.*].tag == .EXCLUSION){
-		arg.tag = .exclusion;
-	}
-	else if (tokens[token_index.*].tag == .OPTIONAL){
-		arg.tag = .optional; 
-	}
-	else if (tokens[token_index.*].tag != .ARGUMENT){
-		const nonstandard = Arg {
-			.tag = .inclusion,
-			.name=tokens[token_index.*],
-			.pattern=Pattern{
-				.keyword=tokens[token_index.*]
-			}
-		};
-		token_index.* += 1;
-		return nonstandard;
-	}
-	token_index.* += 1;
-	if (token_index.* == tokens.len){
-		std.debug.print("Found end of file in the middle of a pattern definition\n", .{});
-		token_index.*-=1;
-		return ParseError.UnexpectedEOF;
-	}
-	if (tokens[token_index.*].tag != .IDENTIFIER){
-		std.debug.print("Expected identifier for argument name, found {s}\n", .{tokens[token_index.*].text});
-		return ParseError.UnexpectedToken;
-	}
-	arg.name = tokens[token_index.*];
-	token_index.* += 1;
-	if (token_index.* == tokens.len){
-		std.debug.print("Found end of file in the middle of a pattern definition, expected either : pattern scheme or expansion\n", .{});
-		token_index.*-=1;
-		return ParseError.UnexpectedEOF;
-	}
-	if (tokens[token_index.*].tag != .IS_OF){
-		arg.pattern = Pattern.token;
-		return arg;
-	}
-	token_index.* += 1;
-	if (token_index.* == tokens.len){
-		std.debug.print("Found end of file in the middle of a pattern definition, expected pattern scheme following :\n", .{});
-		token_index.*-=1;
-		return ParseError.UnexpectedEOF;
-	}
-	arg.pattern = try parse_pattern(mem, tokens, token_index);
-	return arg;
-}
-
-pub fn parse_pattern(mem: *const std.mem.Allocator, tokens: []Token, token_index: *u64) ParseError!Pattern {
-	if (tokens[token_index.*].tag == .OPEN_BRACK){
-		var pattern = Pattern{
-			.alternate=Buffer(Buffer(*Arg)).init(mem.*)
-		};
-		token_index.* += 1;
-		try skip_whitespace(tokens, token_index);
-		if (token_index.* == tokens.len){
-			std.debug.print("Found end of file in the middle of a pattern definition\n", .{});
-			token_index.*-=1;
-			return ParseError.UnexpectedEOF;
-		}
-		blk: while (token_index.* < tokens.len){
-			if (tokens[token_index.*].tag == .CLOSE_BRACK){
-				token_index.* += 1;
-				try skip_whitespace(tokens, token_index);
-				break;
-			}
-			var list = Buffer(*Arg).init(mem.*);
-			while (token_index.* < tokens.len){
-				const loc = mem.create(Arg)
-					catch unreachable;
-				loc.* = try parse_arg(mem, tokens, token_index);
-				list.append(loc)
-					catch unreachable;
-				try skip_whitespace(tokens, token_index);
-				if (tokens[token_index.*].tag == .ALTERNATE){
-					token_index.* += 1;
-					break;
-				}
-				if (tokens[token_index.*].tag == .CLOSE_BRACK){
-					token_index.* += 1;
-					pattern.alternate.append(list)
-						catch unreachable;
-					break :blk;
-				}
-			}
-			pattern.alternate.append(list)
-				catch unreachable;
-		}
-		return pattern;
-	}
-	if (tokens[token_index.*].tag == .OPEN_BRACE){
-		token_index.* += 1;
-		try skip_whitespace(tokens, token_index);
-		var pattern = Pattern{
-			.variadic=.{
-				.members = Buffer(*Arg).init(mem.*),
-				.separator = null
-			}
-		};
-		while (token_index.* < tokens.len){
-			const loc = mem.create(Arg)
-					catch unreachable;
-			loc.* = try parse_arg(mem, tokens, token_index);
-			pattern.variadic.members.append(loc)
-				catch unreachable;
-			try skip_whitespace(tokens, token_index);
-			if (tokens[token_index.*].tag == .CLOSE_BRACE){
-				pattern.variadic.separator = pattern.variadic.members.pop();
-				token_index.* += 1;
-				try skip_whitespace(tokens, token_index);
-				break;
-			}
-		}
-		std.debug.assert(pattern.variadic.separator != null);
-		return pattern;
-	}
-	const open_loc = mem.create(Arg)
-		catch unreachable;
-	try skip_whitespace(tokens, token_index);
-	open_loc.* = try parse_arg(mem, tokens, token_index);
-	try skip_whitespace(tokens, token_index);
-	if (tokens[token_index.*].tag != .ELIPSES){
-		if (tokens[token_index.*].tag == .BYTE_ELIPSES){
-			token_index.* += 1;
-			try skip_whitespace(tokens, token_index);
-			const close_loc = mem.create(Arg)
-				catch unreachable;
-			close_loc.* = try parse_arg(mem, tokens, token_index);
-			return Pattern{
-				.byte_group = .{
-					.open = open_loc,
-					.close=close_loc
-				}
-			};
-		}
-		std.debug.print("Expected elipses ... for grouping expression, found {s}\n", .{tokens[token_index.*].text});
-		return ParseError.UnexpectedToken;
-	}
-	token_index.* += 1;
-	try skip_whitespace(tokens, token_index);
-	const close_loc = mem.create(Arg)
-		catch unreachable;
-	close_loc.* = try parse_arg(mem, tokens, token_index);
-	return Pattern{
-		.group = .{
-			.open=open_loc,
-			.close=close_loc
-		}
-	};
 }
 
 pub fn report_error(token_stream: *const Buffer(Token), token_index: u64) void{
@@ -7374,11 +7078,14 @@ pub fn parse_pattern_def(mem: *const std.mem.Allocator, state: *State, token_ind
 pub fn show_state(state: *State) void {
 	for (state.binds) |*bind| {
 		show_bind(bind);
+		std.debug.print("\n", .{});
 	}
 	for (state.patterns) |*pattern| {
 		show_pattern_def(pattern);
+		std.debug.print("\n", .{});
 	}
 	show_tokens(state.program);
+	std.debug.print("\n", .{});
 }
 
 pub fn show_bind(bind: *Bind) void {
@@ -7459,6 +7166,43 @@ pub fn show_constructor(cons: *Constructor) void {
 pub fn show_pattern_def(def: PatternDef) void {
 	std.debug.print("pattern {s} = ", .{def.name});
 	show_pattern(&def.pattern);
+}
+
+pub fn parse(mem: *const std.mem.Allocator, state: *State) ParseError!State {
+	var new = try parse_binds(mem, state);
+	while (try apply_binds(mem, state)){ }
+	//TODO
+}
+
+pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool {
+	var bind_index = 0;
+	changed = false;
+	while (bind_index < state.binds.items.len){
+		const bind = &state.binds.items[bind_index];
+		var token_index = 0;
+		while (token_index < state.program.items.len){
+			old = state.program;
+			state.program = apply_bind(mem, &state.program, &token_index, bind);
+			if (state.program != old){
+				changed = true;
+			}
+		}
+		var next_index = bind_index + 1;
+		while (next_index < state.binds.items.len){
+			const next = &state.binds.items[next_index];
+			if (next.hoist) |*hoist|{
+				var index = 0;
+				while (index < hoist.items.len){
+					next.hoist = apply_bind(mem, hoist, &index);
+				}
+			}
+			var index = 0;
+			while (index < next.expansion.items.len){
+				next.expansion = apply_bind(mem, &next.expansion, &index);
+			}
+		}
+	}
+	return changed;
 }
 
 //TODO think about debugging infrastructure
