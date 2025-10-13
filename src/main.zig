@@ -7165,7 +7165,6 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 	const noteq = state.program.items[token_index.*];
 	std.debug.assert(noteq.tag != .EQUALS);
 	while (token_index.* < state.program.items.len){
-		pass_whitespace(state, token_index);
 		const token = state.program.items([token_index.*];
 		if (token.tag == .HOIST){
 			bind.hoist_field = try parse_field(mem, state, token_index);
@@ -7174,9 +7173,34 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 			token_index.* += 1;
 			continue;
 		}
+		if (token.tag == .SEMI) {
+			token_index.* += 1;
+			pass_whitespace(state, token_index);
+			const where = state.program.items[token_index.*];
+			if (where.tag == .WHERE){
+				token_index.* += 1;
+				pass_whitespace(state, token_index);
+				const open = state.program.items[token_index.*];
+				if (open.tag != .BRACE_OPEN){
+					std.debug.print("Expected { to open where clause, found {s}\n", {open.text});
+				}
+				token_index.* += 1;
+				while (token_index.* < state.program.items.len){
+					pass_whitespace(state, token_index);
+					const next = state.program.items[token_index.*];
+					if (next.tag == .BRACE_CLOSE){
+						break;
+					}
+					bind.where.append(try parse_bind(mem, state, token_index))
+						catch unreachable;
+				}
+			}
+			return bind;
+		}
 		bind.expansion.append(token)
 			catch unreachable;
 	}
+	unreachable;
 }
 
 pub fn parse_arg(mem: *const std.mem.Allocator, state: *State, token_index: *u64) ParseError!Arg {
@@ -7364,7 +7388,17 @@ pub fn show_bind(bind: *Bind) void {
 		show_arg(&bind.name[index]);
 	}
 	std.debug.print(" =\n   ", .{});
-	//TODO
+	if (bind.hoist) |hoist| {
+		show_tokens(hoist);
+		std.debug.print("\n", .{});
+	}
+	if (bind.hoist_field) |field| {
+		std.debug.print("hoisting to: ", .{});
+		show_field(&field);
+		std.debug.print("\n", .{});
+	}
+	show_tokens(bind.expansion);
+	std.debug.print("\n", .{});
 }
 
 pub fn show_arg(arg: *Arg) void {
