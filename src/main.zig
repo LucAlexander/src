@@ -1173,34 +1173,6 @@ pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern
 	unreachable;
 }
 
-pub fn apply_bind(mem: *const std.mem.Allocator, bind: *Bind, bind_index: u64, tokens: []Token, token_index: *u64) ?AppliedBind {
-	const save_index = token_index.*;
-	var list = Buffer(*ArgTree).init(mem.*);
-	var uniques = std.StringHashMap([]u8).init(mem.*);
-	for (bind.args.items) |*arg| {
-		if (token_index.* >= tokens.len){
-			return null;
-		}
-		const sequence = apply_rule(mem, &uniques, arg, tokens, token_index.*, 0) catch {
-			token_index.* = save_index;
-			return null;
-		};
-		if (sequence) |seq| {
-			std.debug.assert(seq.expansion != null);
-			list.append(seq)
-				catch unreachable;
-			token_index.* += seq.expansion_len;
-		}
-	}
-	return AppliedBind{
-		.bind = bind_index,
-		.expansions=list,
-		.uniques=uniques,
-		.start_index = save_index,
-		.end_index = token_index.*
-	};
-}
-
 pub fn block_binds(mem: *const std.mem.Allocator, program: *ProgramText, precedence: u64) Buffer(AppliedBind) {
 	var buffer = Buffer(AppliedBind).init(mem.*);
 	var i: u64 = 0;
@@ -1250,113 +1222,6 @@ pub fn aggregate_hoists(mem: *const std.mem.Allocator, input_index: u64, token_i
 		save_index += 1;
 	}
 
-}
-
-pub fn apply_binds(mem: *const std.mem.Allocator, txt: *Buffer(Token), aux: *Buffer(Token), program: *ProgramText, done: *bool) ParseError!*Buffer(Token) {
-	var precedence: u64 = blk: {
-		var max: u64 = '0';
-		for (program.binds.items) |*bind| {
-			if (bind.precedence > max){
-				max = bind.precedence;
-			}
-		}
-		break :blk max;
-	};
-	var new = aux;
-	while (precedence > '0') {
-		var reparse = false;
-		const blocks = block_binds(mem, program, precedence);
-		if (blocks.items.len == 0){
-			precedence -= 1;
-			if (precedence <= '0'){
-				const stream = program.text;
-				program.text = new;
-				return stream;
-			}
-			continue;
-		}
-		done.* = false;
-		new.clearRetainingCapacity();
-		var i: u64 = 0;
-		var token_index:u64 = 0;
-		if (blocks.items.len == 1){
-			const current = blocks.items[0];
-			while (token_index < current.start_index){
-				new.append(program.text.items[token_index])
-					catch unreachable;
-				token_index += 1;
-			}
-			const save_index = token_index;
-			token_index = current.end_index;
-			var stack = Buffer(*ArgTree).init(mem.*);
-			_ = try rewrite(mem, program.binds, current, new, 0, false, false, &stack);
-			aggregate_hoists(mem, save_index, token_index, program, new);
-		}
-		else{
-			while (i < blocks.items.len-1){
-				const current = blocks.items[i];
-				const next = blocks.items[i+1];
-				while (token_index < current.start_index){
-					new.append(program.text.items[token_index])
-						catch unreachable;
-					token_index += 1;
-				}
-				const save_index = token_index;
-				token_index = current.end_index;
-				var adjust = false;
-				if (current.end_index > next.start_index and current.end_index < next.end_index){
-					adjust = true;
-				}
-				var stack = Buffer(*ArgTree).init(mem.*);
-				_ = try rewrite(mem, program.binds, current, new, 0, false, false, &stack);
-				aggregate_hoists(mem, save_index, token_index, program, new);
-				if (adjust == true){
-					reparse = true;
-					while (token_index < program.text.items.len){
-						new.append(program.text.items[token_index])
-							catch unreachable;
-						token_index += 1;
-					}
-					break;
-				}
-				i += 1;
-			}
-			if (reparse == false){
-				const current = blocks.items[i];
-				while (token_index < current.start_index){
-					new.append(program.text.items[token_index])
-						catch unreachable;
-					token_index += 1;
-				}
-				const save_index = token_index;
-				token_index = current.end_index;
-				var stack = Buffer(*ArgTree).init(mem.*);
-				_ = try rewrite(mem, program.binds, current, new, 0, false, false, &stack);
-				aggregate_hoists(mem, save_index, token_index, program, new);
-			}
-		}
-		while (token_index < program.text.items.len){
-			new.append(program.text.items[token_index])
-				catch unreachable;
-			token_index += 1;
-		}
-		program.text = new;
-		if (new == aux){
-			new = txt;
-		}
-		else {
-			new = aux;
-		}
-		if (reparse == false){
-			precedence -= 1;
-		}
-		if (precedence <= '0'){
-			break;
-		}
-	}
-	const stream = program.text;
-	program.text = new;
-	return stream;
 }
 
 pub fn token_equal(a: *Token, b: *Token) bool {
@@ -6773,6 +6638,7 @@ const Constructor = struct {
 
 const Field = union(enum) {
 	identifier,
+	constructor: Token,
 	literal: Buffer(Token),
 	pattern: Pattern
 };
@@ -6809,13 +6675,13 @@ const Bind = struct {
 
 const State = struct {
 	binds: Buffer(Bind),
-	patterns: Buffer(PatternDef),
+	patterns: StringHashMap(PatternDef),
 	program: Buffer(Token),
 
 	pub fn init(mem: *const std.mem.Allocator) State {
 		return State{
 			.binds = Buffer(Bind).init(mem.*),
-			.patterns: Buffer(PatternDef).init(mem.*),
+			.patterns: StringHashMap(PatternDef).init(mem.*),
 			.program = Buffer(Token).init(mem.*)
 		};
 	}
@@ -6843,7 +6709,8 @@ pub fn parse_binds(mem: *const std.mem.Allocator, state: *State) ParseError!Stat
 			continue;
 		}
 		else if (token.tag == .PATTERN){
-			state.patterns.append(try parse_pattern_def(mem, state, &token_index))
+			const def = try parse_pattern_def(mem, state, &token_index);
+			state.patterns.put(def.name.text, def);
 		}
 		new.state.program.append(token);
 		token_index += 1;
@@ -6997,8 +6864,10 @@ pub fn parse_field(mem: *const std.mem.Allocator, state: *State, token_index: *u
 			};
 		},
 		else => {
-			std.debug.print("Expected * ' or ( to open field, found {s}\n", .{token.text});
-			return ParseError.UnexpectedToken;
+			token_index.* += 1;
+			return Field{
+				.constructor = token
+			};
 		}
 	}
 	unreachable;
@@ -7170,8 +7039,60 @@ pub fn show_pattern_def(def: PatternDef) void {
 
 pub fn parse(mem: *const std.mem.Allocator, state: *State) ParseError!State {
 	var new = try parse_binds(mem, state);
-	while (try apply_binds(mem, state)){ }
-	//TODO
+	try check_binds(new);
+	while (try apply_binds(mem, new)){}
+}
+
+pub fn check_binds(state: *State) ParseError!void {
+	for (state.binds) |bind| {
+		for (bind.name) |arg| {
+			switch (arg){
+				.constructor => {
+					if (!state.patterns.get(arg.constructor.name.text)) {
+						std.debug.print("Unknown pattern constructor reference: {s}\n", .{arg.constructor.name.text});
+						return ParseError.UnexpectedToken;
+					}
+				},
+				.pattern => {
+					try check_binds(state, &arg.pattern);
+				},
+				else => {
+					continue;
+				}
+			}
+		}
+	}
+	for (state.patterns) |*def| {
+		try check_pattern(def);
+	}
+}
+
+pub fn check_field(state: *State, field: *Field) ParseError!void {
+	switch (field){
+		.identifier => {
+			return;
+		},
+		.constructor => {
+			if (!state.patterns.get(field.constructor.text)){
+				std.debug.print("Unknown constructor reference in field: {s}\n", field.constructor.text);
+				return ParseError.UnexpectedToken;
+			}
+		},
+		.literal => {
+			return;
+		},
+		.pattern => {
+			try check_pattern(state, &field.pattern);
+		}
+	}
+}
+
+pub fn check_pattern(state: *State, pattern: *Pattern) ParseError!void{
+	for (pattern) |*cons|{
+		for (cons.fields) |*field|{
+			try check_field(state, field);
+		}
+	}
 }
 
 pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool {
@@ -7182,7 +7103,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 		var token_index = 0;
 		while (token_index < state.program.items.len){
 			old = state.program;
-			state.program = apply_bind(mem, &state.program, &token_index, bind);
+			state.program = try apply_bind(mem, &state.program, &token_index, bind);
 			if (state.program != old){
 				changed = true;
 			}
@@ -7193,16 +7114,22 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 			if (next.hoist) |*hoist|{
 				var index = 0;
 				while (index < hoist.items.len){
-					next.hoist = apply_bind(mem, hoist, &index);
+					next.hoist = try apply_bind(mem, hoist, &index);
 				}
 			}
 			var index = 0;
 			while (index < next.expansion.items.len){
-				next.expansion = apply_bind(mem, &next.expansion, &index);
+				next.expansion = try apply_bind(mem, &next.expansion, &index);
 			}
+			next_index += 1;
 		}
+		bind_index += 1;
 	}
 	return changed;
+}
+
+pub fn apply_bind(mem: *const std.mem.Allocator, tokens: *Buffer(Token), token_index: *u64) ParseError!*Buffer(Token){
+	//TODO pattern match and expand
 }
 
 //TODO think about debugging infrastructure
@@ -7210,3 +7137,5 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 	//breakpoints
 	//stepthrough
 	//backtrack
+
+//TODO the way im doing it isnt recursive
