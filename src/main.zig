@@ -789,54 +789,6 @@ pub fn to_byte_token_slice(mem: *const std.mem.Allocator, c: u8) []u8 {
 	return text;
 }
 
-pub fn concat_pass(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: *const Buffer(Token)) ParseError!bool {
-	var new = aux;
-	new.clearRetainingCapacity();
-	var concatenated = false;
-	var index: u64 = 0;
-	while (index < program.items.len-2) {
-		const concat = program.items[index+1];
-		if (concat.tag != .CONCAT){
-			new.append(program.items[index])
-				catch unreachable;
-			index += 1;
-			continue;
-		}
-		concatenated = true;
-		var left = program.items[index];
-		var offset: u64 = 1;
-		while (left.tag == .SPACE or left.tag == .TAB or left.tag == .NEW_LINE){
-			left = program.items[index-offset];
-			offset += 1;
-		}
-		var right = program.items[index+2];
-		offset = 1;
-		while (right.tag == .SPACE or right.tag == .TAB or right.tag == .NEW_LINE){
-			right = program.items[index+2+offset];
-			offset += 1;
-		}
-		const together = mem.alloc(u8, left.text.len+right.text.len)
-			catch unreachable;
-		var i:u64 = 0;
-		while (i<left.text.len){
-			together[i] = left.text[i];
-			i += 1;
-		}
-		while ((i-left.text.len)<right.text.len) {
-			together[i] = right.text[i-left.text.len];
-			i += 1;
-		}
-		new.append(Token{.tag=.IDENTIFIER,.text=together, .hoist_data=null, hoist_token = null})
-			catch unreachable;
-		index += 3+(offset-1);
-	}
-	while (index < program.items.len) : (index += 1){
-		new.append(program.items[index])
-			catch unreachable;
-	}
-	return concatenated;
-}
-
 pub fn move_data(run: *Buffer(Token), comp: *const Buffer(Token), mem: *const std.mem.Allocator) ParseError!void {
 	var token_index: u64 = 0;
 	while (token_index < comp.items.len){
@@ -6717,6 +6669,34 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 
 pub fn concat_pass(mem: std.mem.Allocator, state: *State) bool {
 	var changed = false;
+	var token_index: u64 = 0;
+	var new = Buffer(Token).init(mem.*);
+	while (token_index < state.program.items.len){
+		const token = state.program.items[token_index];
+		token_index += 1;
+		const cat = state.program.items[token_index];
+		if (cat.tag == .CONCAT){
+			token_index += 1;
+			const right = state.program.items[token_index];
+			token_index += 1;
+			const together = mem.alloc(u8, token.text.len + right.text.len)
+				catch unreachable;
+			var i:u64 = 0;
+			while (i<token.text.len){
+				together[i] = token.text[i];
+				i += 1;
+			}
+			while ((i-token.text.len)<right.text.len) {
+				together[i] = right.text[i-token.text.len];
+				i += 1;
+			}
+			new.append(Token{.tag=.IDENTIFIER, .text=together, .hoist_data=token.hoist_data, .hoist_token=token.hoist_token})
+				catch unreachable;
+			continue;
+		}
+		new.append(token);
+	}
+	state.program = new;
 	return changed;
 }
 
