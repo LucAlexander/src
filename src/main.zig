@@ -545,7 +545,8 @@ const TOKEN = enum {
 const Token = struct {
 	text: []u8,
 	tag: TOKEN,
-	hoist_data: ?Buffer(AppliedBind)
+	hoist_data: ?Buffer(Token),
+	hoist_token: ?Token
 };
 
 const ProgramText = struct {
@@ -601,7 +602,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 			if (escape){
 				tag = .IDENTIFIER;
 			}
-			tokens.append(Token{.tag=tag, .text=text[i..i+1], .hoist_data=null})
+			tokens.append(Token{.tag=tag, .text=text[i..i+1], .hoist_data=null, hoist_token = null})
 				catch unreachable;
 			i += 1;
 			continue;
@@ -627,7 +628,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				tag = .IDENTIFIER;
 			}
 		}
-		tokens.append(Token{.tag=tag, .text=keyword, .hoist_data=null})
+		tokens.append(Token{.tag=tag, .text=keyword, .hoist_data=null, hoist_token=null})
 			catch unreachable;
 		i += size;
 	}
@@ -691,66 +692,6 @@ pub fn show_tokens(tokens: Buffer(Token)) void {
 	std.debug.print("\n", .{});
 }
 
-pub fn parse(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), program: *ProgramText, token_index: *u64) !bool {
-	var done = true;
-	while (token_index.* < tokens.items.len){
-		const token = &tokens.items[token_index.*];
-		if (token.tag != .BIND){
-			program.text.append(token.*)
-				catch unreachable;
-			token_index.* += 1;
-			continue;
-		}
-		if (try parse_bind(mem, tokens.items, token_index)) |bind| {
-			done = false;
-			program.binds.append(bind)
-				catch unreachable;
-			while (token_index.* < tokens.items.len){
-				const copy = tokens.items[token_index.*];
-				program.text.append(copy)
-					catch unreachable;
-				token_index.* += 1;
-			}
-			return done;
-		}
-		program.text.append(token.*)
-			catch unreachable;
-		token_index.* += 1;
-	}
-	return done;
-}
-
-pub fn split_hoist(mem: *const std.mem.Allocator, bind: *Bind) ParseError!void {
-	var token_index = bind.text.items.len;
-	while (token_index > 0){
-		const i = token_index-1;
-		const tok = bind.text.items[i];
-		token_index -= 1;
-		if (tok.tag == .HOIST){
-			var index: u64 = 0;
-			while (index < i){
-				bind.hoist.append(bind.text.items[index])
-					catch unreachable;
-				index += 1;
-			}
-			index += 1;
-			if (index >= bind.text.items.len){
-				std.debug.print("Expected token to hoist to\n", .{});
-				return ParseError.UnexpectedEOF;
-			}
-			bind.hoist_token = try parse_arg(mem, bind.text.items, &index);
-			var offset: u64 = 0;
-			while (index < bind.text.items.len) {
-				bind.text.items[offset] = bind.text.items[index];
-				index += 1;
-				offset += 1;
-			}
-			bind.text.items.len = offset;
-			return;
-		}
-	}
-}
-
 pub fn skip_whitespace(tokens: []Token, token_index: *u64) ParseError!void {
 	while (token_index.* < tokens.len){
 		if (tokens[token_index.*].tag == .SPACE){
@@ -803,28 +744,6 @@ pub fn report_error(token_stream: *const Buffer(Token), token_index: u64) void{
 	std.debug.print(" ^\n", .{});
 }
 
-pub fn show_program(program: ProgramText) void {
-	if (!debug){
-		return;
-	}
-	show_tokens(program.text.*);
-	std.debug.print("end text -----------\n", .{});
-	for (program.binds.items) |bind| {
-		std.debug.print("precedence {}\nargs:\n", .{bind.precedence});
-		for (bind.args.items) |arg| {
-			show_arg(arg);
-			std.debug.print("\n", .{});
-		}
-		std.debug.print("expansion:\n", .{});
-		if (bind.hoist_token) |_| {
-			show_tokens(bind.hoist);
-			std.debug.print(";\n", .{});
-		}
-		show_tokens(bind.text);
-	}
-	std.debug.print("end binds ----------\n", .{});
-}
-
 const PatternError = error {
 	MissingKeyword,
 	ExhaustedAlternate,
@@ -860,501 +779,8 @@ pub fn apply_rule(mem: *const std.mem.Allocator, uniques: *std.StringHashMap([]u
 	unreachable;
 }
 
-pub fn convert_bytesequence(mem: *const std.mem.Allocator, tokens: []Token) []Token {
-	std.debug.assert(tokens.len != 0);
-	var concat = Buffer(u8).init(mem.*);
-	var hoist = Buffer(AppliedBind).init(mem.*);
-	for (tokens) |token| {
-		if (token.hoist_data) |hd| {
-			hoist.appendSlice(hd.items)
-				catch unreachable;
-		}
-		concat.appendSlice(token.text)
-			catch unreachable;
-	}
-	var tok = mem.alloc(Token, 1)
-		catch unreachable;
-	tok[0] = Token{
-		.tag=.IDENTIFIER, .text=concat.items, .hoist_data=hoist
-	};
-	return tok;
-}
-
-pub fn apply_pattern(mem: *const std.mem.Allocator, name: Arg, pattern: *Pattern, tokens: []Token, token_index: u64, var_depth: u64, uniques: *std.StringHashMap([]u8)) PatternError!*ArgTree {
-	switch (pattern.*){
-		.token => {
-			const new_index = apply_whitespace(token_index, tokens);
-			if (new_index >= tokens.len){
-				return PatternError.UnexpectedEOF; 
-			}
-			const slice_dup = mem.dupe(Token, tokens[token_index..new_index+1]) catch unreachable;
-			return ArgTree.init(mem, name, slice_dup);
-		},
-		.keyword => {
-			if (pattern.keyword.tag == .LINE_END){
-				if (tokens[token_index].tag == .NEW_LINE){
-					const slice_dup = mem.dupe(Token, tokens[token_index..token_index+1]) catch unreachable;
-					return ArgTree.init(mem, name, slice_dup);
-				}
-				return PatternError.MissingKeyword;
-			}
-			if (pattern.keyword.tag == .WHITESPACE){
-				if (tokens[token_index].tag == .NEW_LINE or
-					tokens[token_index].tag == .SPACE or
-					tokens[token_index].tag == .TAB){
-					const slice_dup = mem.dupe(Token, tokens[token_index..token_index+1]) catch unreachable;
-					return ArgTree.init(mem, name, slice_dup);
-				}
-				return PatternError.MissingKeyword;
-			}
-			const new_index = apply_whitespace(token_index, tokens);
-			if (new_index >= tokens.len){
-				return PatternError.UnexpectedEOF; 
-			}
-			if (token_equal(&tokens[new_index], &pattern.keyword)){
-				const slice_dup = mem.dupe(Token, tokens[token_index..new_index+1]) catch unreachable;
-				return ArgTree.init(mem, name, slice_dup);
-			}
-			return PatternError.MissingKeyword;
-		},
-		.alternate => |*alternate| {
-			var list = Buffer(*ArgTree).init(mem.*);
-			blk: for (alternate.items, 0..) |*seqlist, alt| {
-				var temp_index = token_index;
-				for (seqlist.items) |arg| {
-					const sequence = apply_rule(mem, uniques, arg, tokens, temp_index, var_depth) catch {
-						list.clearRetainingCapacity();
-						continue :blk;
-					};
-					if (sequence) |seq| {
-						std.debug.assert(seq.expansion != null);
-						list.append(seq)
-							catch unreachable;
-						temp_index += seq.expansion_len;
-					}
-				}
-				const slice_dup = mem.dupe(Token, tokens[token_index..token_index+1]) catch unreachable;
-				const tree = ArgTree.init(mem, name, slice_dup);
-				tree.nodes = list;
-				tree.alternate=alt;
-				return tree;
-			}
-			return PatternError.ExhaustedAlternate;
-		},
-		.group => {
-			var list = Buffer(*ArgTree).init(mem.*);
-			const open_sequence = try apply_rule(mem, uniques, pattern.group.open, tokens, token_index, var_depth);
-			var temp_index = token_index;
-			if (open_sequence) |seq| {
-				std.debug.assert(seq.expansion != null);
-				list.append(seq)
-					catch unreachable;
-				temp_index += seq.expansion_len;
-			}
-			const after_first = temp_index;
-			var before_last = temp_index;
-			while (temp_index < tokens.len){
-				const close_sequence = apply_rule(mem, uniques, pattern.group.close, tokens, temp_index, var_depth) catch {
-					temp_index += 1;
-					continue;
-				};
-				if (close_sequence) |close| {
-					std.debug.assert(close.expansion != null);
-					list.append(close)
-						catch unreachable;
-					before_last = temp_index;
-					temp_index += close.expansion_len;
-				}
-				break;
-			}
-			const slice_dup = mem.dupe(Token, tokens[after_first..before_last]) catch unreachable;
-			const tree = ArgTree.init(mem, name, slice_dup);
-			tree.expansion_len = temp_index-token_index;
-			tree.nodes = list;
-			return tree;
-		},
-		.byte_group => {
-			var list = Buffer(*ArgTree).init(mem.*);
-			const open_sequence = try apply_rule(mem, uniques, pattern.byte_group.open, tokens, token_index, var_depth);
-			var temp_index = token_index;
-			if (open_sequence) |seq| {
-				std.debug.assert(seq.expansion != null);
-				list.append(seq)
-					catch unreachable;
-				temp_index += seq.expansion_len;
-			}
-			const after_first = temp_index;
-			var before_last = temp_index;
-			while (temp_index < tokens.len){
-				const close_sequence = apply_rule(mem, uniques, pattern.byte_group.close, tokens, temp_index, var_depth) catch {
-					temp_index += 1;
-					continue;
-				};
-				if (close_sequence) |close| {
-					std.debug.assert(close.expansion != null);
-					list.append(close)
-						catch unreachable;
-					before_last = temp_index;
-					temp_index += close.expansion_len;
-				}
-				break;
-			}
-			const slice_dup = mem.dupe(Token, tokens[after_first..before_last]) catch unreachable;
-			const tree = ArgTree.init(mem, name, convert_bytesequence(mem, slice_dup));
-			tree.expansion_len = temp_index-token_index;
-			tree.nodes = list;
-			return tree;
-		},
-		.variadic => {
-			std.debug.assert(pattern.variadic.separator != null);
-			var temp_index:u64 = token_index;
-			var times:u64 = 0;
-			var superlist = Buffer(Buffer(*ArgTree)).init(mem.*);
-			while (true){
-				const save_index = temp_index;
-				var sublist = Buffer(*ArgTree).init(mem.*);
-				for (pattern.variadic.members.items) |arg| {
-					const sequence = apply_rule(mem, uniques, arg, tokens, temp_index, var_depth+1) catch |err| {
-						if (times == 0){
-							return err;
-						}
-						superlist.append(sublist)
-							catch unreachable;
-						const slice_dup = mem.dupe(Token, tokens[token_index..save_index]) catch unreachable;
-						const tree = ArgTree.init(mem, name, slice_dup);
-						for (superlist.items) |list| {
-							const subtree = ArgTree.init(mem, name, null);
-							subtree.nodes = list;
-							tree.nodes.append(subtree)
-								catch unreachable;
-						}
-						return tree;
-					};
-					if (sequence)|seq| {
-						std.debug.assert(seq.expansion != null);
-						sublist.append(seq)
-							catch unreachable;
-						temp_index += seq.expansion_len;
-					}
-				}
-				std.debug.assert(pattern.variadic.separator != null);
-				const sep_sequence = apply_rule(mem, uniques, pattern.variadic.separator.?, tokens, temp_index, var_depth+1) catch {
-					superlist.append(sublist)
-						catch unreachable;
-					const slice_dup = mem.dupe(Token, tokens[token_index..temp_index]) catch unreachable;
-					const tree = ArgTree.init(mem, name, slice_dup);
-					for (superlist.items) |list| {
-						const subtree = ArgTree.init(mem, name, null);
-						subtree.nodes = list;
-						tree.nodes.append(subtree)
-							catch unreachable;
-					}
-					return tree;
-				};
-				if (sep_sequence) |sep| {
-					std.debug.assert(sep.expansion != null);
-					sublist.append(sep)
-						catch unreachable;
-					temp_index += sep.expansion_len;
-				}
-				superlist.append(sublist)
-					catch unreachable;
-				times += 1;
-			}
-		}
-	}
-	unreachable;
-}
-
 pub fn token_equal(a: *Token, b: *Token) bool {
 	return std.mem.eql(u8, a.text, b.text);
-}
-
-pub fn rewrite(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), current: AppliedBind, new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
-	for (current.expansions.items) |applied| {
-		stack.append(applied)
-			catch unreachable;
-	}
-	defer for (current.expansions.items) |_| {
-		_ = stack.pop();
-	};
-	var index: u64 = input_index;
-	var nest_depth: u64 = 0;
-	var first = true;
-	const current_bind = outer_binds.items[current.bind];
-	outer: while (index < current_bind.text.items.len) : (index += 1){
-		const token = &current_bind.text.items[index];
-		if (altnest){
-			if (token.tag == .ALTERNATE or token.tag == .CLOSE_BRACK){
-				if (nest_depth == 0){
-					break :outer;
-				}
-				if (token.tag == .CLOSE_BRACK){
-					nest_depth -= 1;
-				}
-			}
-			else if (token.tag == .OPEN_BRACK){
-				nest_depth += 1;
-			}
-		}
-		else if (varnest){
-			if (token.tag == .CLOSE_BRACE){
-				if (nest_depth == 0){
-					break :outer;
-				}
-				nest_depth -= 1;
-			}
-			if (token.tag == .OPEN_BRACE){
-				nest_depth += 1;
-			}
-		}
-		if (current.uniques.get(token.text)) |id| {
-			if (first){
-				first = false;
-				if (current_bind.hoist_token) |_| {
-					var hd = Buffer(AppliedBind).init(mem.*);
-					hd.append(current)
-						catch unreachable;
-					new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=hd})
-						catch unreachable;
-				}
-				else{
-					new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=null})
-						catch unreachable;
-				}
-			}
-			else{
-				new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=null})
-					catch unreachable;
-			}
-			continue :outer;
-		}
-		var arg_index: u64 = 0;
-		while (arg_index < stack.items.len) : (arg_index += 1){
-			const arg = stack.items[arg_index];
-			if (!token_equal(token, &arg.arg.name)){
-				continue;
-			}
-			if (arg.arg.pattern == Pattern.alternate){
-				if (index < current_bind.text.items.len){
-					if (current_bind.text.items[index+1].tag == .OPEN_BRACK){
-						for (arg.nodes.items) |alt_arg| {
-							stack.append(alt_arg)
-								catch unreachable;
-						}
-						defer for (arg.nodes.items) |_| {
-							_ = stack.pop();
-						};
-						index += 2;
-						for (0..arg.alternate) |_| {
-							var depth: u64 = 0;
-							while (index < current_bind.text.items.len) : (index += 1){
-								if (current_bind.text.items[index].tag == .ALTERNATE){
-									if (depth == 0){
-										index += 1;
-										break;
-									}
-									continue;
-								}
-								if (current_bind.text.items[index].tag == .OPEN_BRACK){
-									depth += 1;
-									continue;
-								}
-								if (current_bind.text.items[index].tag == .CLOSE_BRACK){
-									if (depth == 0){
-										std.debug.print("Not enough alternate expansions for alternate applied in bind argument\n", .{});
-										return ParseError.AlternateUnmatchable;
-									}
-									depth -= 1;
-								}
-							}
-						}
-						index = try rewrite(mem, outer_binds, current, new, index, false, true, stack);
-						var depth: u64 = 0;
-						while (index < current_bind.text.items.len) : (index += 1){
-							if (current_bind.text.items[index].tag == .OPEN_BRACK){
-								depth += 1;
-								continue;
-							}
-							if (current_bind.text.items[index].tag == .CLOSE_BRACK){
-								if (depth == 0){
-									break;
-								}
-								depth -= 1;
-							}
-						}
-						continue :outer;
-					}
-				}
-				std.debug.assert(arg.expansion != null);
-				for (arg.expansion.?) |*tok| {
-					var tmp_tok = tok.*;
-					if (first){
-						first = false;
-						if (current_bind.hoist_token) |_| {
-							if (tmp_tok.hoist_data) |_|{
-								tmp_tok.hoist_data.?.append(current)
-									catch unreachable;
-							}
-							else{
-								var hd = Buffer(AppliedBind).init(mem.*);
-								hd.append(current)
-									catch unreachable;
-								tmp_tok.hoist_data = hd;
-							}
-						}
-					}
-					new.append(tmp_tok)
-						catch unreachable;
-				}
-				continue :outer;
-			}
-			if (arg.arg.pattern == Pattern.byte_group){
-				if (index < current_bind.text.items.len){
-					if (current_bind.text.items[index+1].tag == .OPEN_BRACE){
-						const save_index = index+2;
-						const byte_token = current_bind.text.items[save_index];
-						for (0..arg.expansion.?[0].text.len) |i| {
-							const byte_arg = Arg{
-								.tag=.inclusion,
-								.name=byte_token,
-								.pattern=Pattern {
-									.keyword=byte_token
-								}
-							};
-							const byte_expansion_token = mem.alloc(Token, 2) catch unreachable;
-							const lit_buf = mem.alloc(u8, 1) catch unreachable;
-							lit_buf[0] = '!';
-							byte_expansion_token[0] = Token{
-								.tag=.LIT,
-								.text=lit_buf,
-								.hoist_data = null
-							};
-							byte_expansion_token[1] = Token{
-								.tag=.IDENTIFIER,
-								.text=to_byte_token_slice(mem, arg.expansion.?[0].text[i]),
-								.hoist_data = null
-							};
-							const byte_application = ArgTree.init(mem, byte_arg, byte_expansion_token);
-							stack.append(byte_application)
-								catch unreachable;
-							index = try rewrite(mem, outer_binds, current, new, save_index+1, true, false, stack);
-							_ = stack.pop();
-						}
-						continue :outer;
-					}
-				}
-				std.debug.assert(arg.expansion != null);
-				for (arg.expansion.?) |*tok| {
-					var tmp_tok = tok.*;
-					if (first){
-						first = false;
-						if (current_bind.hoist_token) |_|{
-							if (tmp_tok.hoist_data) |_|{
-								tmp_tok.hoist_data.?.append(current)
-									catch unreachable;
-							}
-							else{
-								var hd = Buffer(AppliedBind).init(mem.*);
-								hd.append(current)
-									catch unreachable;
-								tmp_tok.hoist_data = hd;
-							}
-						}
-					}
-					new.append(tmp_tok)
-						catch unreachable;
-				}
-				continue :outer;
-			}
-			if (arg.arg.pattern == Pattern.variadic){
-				if (index < current_bind.text.items.len){
-					if (current_bind.text.items[index+1].tag == .OPEN_BRACE){
-						const save_index = index+1;
-						for (arg.nodes.items) |iter| {
-							for (iter.nodes.items) |iter_arg| {
-								stack.append(iter_arg)
-									catch unreachable;
-							}
-							index = try rewrite(mem, outer_binds, current, new, save_index+1, true, false, stack);
-							std.debug.assert(current_bind.text.items.len-1 == index);
-							for (iter.nodes.items) |_| {
-								_ = stack.pop();
-							}
-						}
-						std.debug.assert(current_bind.text.items.len-1 == index);
-						continue :outer;
-					}
-				}
-				std.debug.assert(arg.expansion != null);
-				for (arg.expansion.?) |*tok| {
-					var tmp_tok = tok.*;
-					if (first){
-						first = false;
-						if (current_bind.hoist_token) |_|{
-							if (tmp_tok.hoist_data) |_|{
-								tmp_tok.hoist_data.?.append(current)
-									catch unreachable;
-							}
-							else{
-								var hd = Buffer(AppliedBind).init(mem.*);
-								hd.append(current)
-									catch unreachable;
-								tmp_tok.hoist_data = hd;
-							}
-						}
-					}
-					new.append(tmp_tok)
-						catch unreachable;
-				}
-				continue :outer;
-			}
-			if (arg.arg.tag == .unique){
-				continue :outer;
-			}
-			std.debug.assert(arg.expansion != null);
-			for (arg.expansion.?) |*tok| {
-				var tmp_tok = tok.*;
-				if (first){
-					first = false;
-					if (current_bind.hoist_token)|_|{
-						if (tmp_tok.hoist_data) |_|{
-							tmp_tok.hoist_data.?.append(current)
-								catch unreachable;
-						}
-						else{
-							var hd = Buffer(AppliedBind).init(mem.*);
-							hd.append(current)
-								catch unreachable;
-							tmp_tok.hoist_data = hd;
-						}
-					}
-				}
-				new.append(tmp_tok)
-					catch unreachable;
-			}
-			continue :outer;
-		}
-		var tmp_tok = token.*;
-		if (first){
-			first = false;
-			if (current_bind.hoist_token)|_|{
-				if (tmp_tok.hoist_data) |_|{
-					tmp_tok.hoist_data.?.append(current)
-						catch unreachable;
-				}
-				else{
-					var hd = Buffer(AppliedBind).init(mem.*);
-					hd.append(current)
-						catch unreachable;
-					tmp_tok.hoist_data = hd;
-				}
-			}
-		}
-		new.append(tmp_tok)
-			catch unreachable;
-	}
-	return index;
 }
 
 pub fn to_byte_token_slice(mem: *const std.mem.Allocator, c: u8) []u8 {
@@ -1400,7 +826,7 @@ pub fn concat_pass(mem: *const std.mem.Allocator, aux: *Buffer(Token), program: 
 			together[i] = right.text[i-left.text.len];
 			i += 1;
 		}
-		new.append(Token{.tag=.IDENTIFIER,.text=together, .hoist_data=null})
+		new.append(Token{.tag=.IDENTIFIER,.text=together, .hoist_data=null, hoist_token = null})
 			catch unreachable;
 		index += 3+(offset-1);
 	}
@@ -1444,7 +870,7 @@ pub fn move_data(run: *Buffer(Token), comp: *const Buffer(Token), mem: *const st
 pub fn mk_token_from_u64(mem: *const std.mem.Allocator, val: u64) Token {
 	const buf = mem.alloc(u8, 20) catch unreachable;
 	const slice = std.fmt.bufPrint(buf, "{}", .{val}) catch unreachable;
-	return Token{.tag=.IDENTIFIER, .text=slice, .hoist_data=null};
+	return Token{.tag=.IDENTIFIER, .text=slice, .hoist_data=null, hoist_token = null};
 }
 
 pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), current: AppliedBind, new: *Buffer(Token), input_index: u64, varnest: bool, altnest: bool, stack: *Buffer(*ArgTree)) ParseError!u64 {
@@ -1485,7 +911,7 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 			}
 		}
 		if (current.uniques.get(token.text)) |id| {
-			new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=null})
+			new.append(Token{.tag=.IDENTIFIER, .text=id, .hoist_data=null, hoist_token = null})
 				catch unreachable;
 			continue :outer;
 		}
@@ -1573,12 +999,14 @@ pub fn rewrite_hoist(mem: *const std.mem.Allocator, outer_binds: *Buffer(Bind), 
 							byte_expansion_token[0] = Token{
 								.tag=.LIT,
 								.text=lit_buf,
-								.hoist_data = null
+								.hoist_data = null,
+								.hoist_token = null
 							};
 							byte_expansion_token[1] = Token{
 								.tag=.IDENTIFIER,
 								.text=to_byte_token_slice(mem, arg.expansion.?[0].text[i]),
-								.hoist_data = null
+								.hoist_data = null,
+								.hoist_token = null
 							};
 							const byte_application = ArgTree.init(mem, byte_arg, byte_expansion_token);
 							stack.append(byte_application)
@@ -7025,52 +6453,83 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 
 pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, bind: *Bind) ParseError!*Buffer(Token){
 	const save_index = token_index.*;
-	const applications = StringHashMap(Application).init(mem.*);
-	for (bind.name) |*arg| {
-		const application = apply_arg(mem, state, tokens, token_index, arg, null) catch {
-			return tokens;
-		};
-		var it = application.iterator();
-		while (it.next()) |app| {
-			applications.put(app.key_ptr.*, app.value_ptr.*)
-				catch unreachable;
-		}
-	}
-	var new = Buffer(Token).init(mem.*);
-	new.appendSlice(tokens[0..save_index+1])
-		catch unreachable;
-	var index = 0;
-	while (index < bind.expansion.items.len){
-		const token = bind.expansion.items[index];
-		index += 1;
-		if (applications.get(token.text)) | expansion | {
-			for (expansion.items) |add| {
-				new.append(add)
+	var changed = true;
+	var new = tokens;
+	while (true){
+		const applications = StringHashMap(Application).init(mem.*);
+		for (bind.name) |*arg| {
+			const application = apply_arg(mem, state, tokens, token_index, arg, null) catch {
+				return new;
+			};
+			var it = application.iterator();
+			while (it.next()) |app| {
+				applications.put(app.key_ptr.*, app.value_ptr.*)
 					catch unreachable;
 			}
-			continue;
 		}
-		new.append(token)
+		new = Buffer(Token).init(mem.*);
+		new.appendSlice(tokens[0..save_index+1])
 			catch unreachable;
-	}
-	var changed = true;
-	while (changed){
-		changed = false;
-		for (bind.where.items) |*where| {
-			index = save_index;
-			while (index < token_index.*){
-				const temp_index = index;
-				new = apply_bind(mem, state, new, &index, where) catch {
-					index = temp_index + 1;
-					continue;
-				};
-				changed = true;
+		var index = 0;
+		var first = true;
+		while (index < bind.expansion.items.len){
+			const token = bind.expansion.items[index];
+			index += 1;
+			if (applications.get(token.text)) | expansion | {
+				for (expansion.items) |add| {
+					if (first){
+						first = false;
+						if (bind.hoist_data) |hoist|{
+							apply_hoist(mem, bind.hoist_token, hoist, &add);
+						}
+					}
+					new.append(add)
+						catch unreachable;
+				}
+				continue;
 			}
+			if (first){
+				first = false;
+				if (bind.hoist_data) |hoist|{
+					apply_hoist(mem, bind.hoist_token, hoist, &token);
+				}
+			}
+			new.append(token)
+				catch unreachable;
 		}
-		index = save_index;
+		while (changed){
+			for (bind.where.items) |*where| {
+				index = save_index;
+				while (index < token_index.*){
+					const temp_index = index;
+					new = apply_bind(mem, state, new, &index, where) catch {
+						index = temp_index + 1;
+						continue;
+					};
+				}
+			}
+			index = save_index;
+		}
 	}
 	return new;
-	//TODO recursion?
+}
+
+pub fn apply_hoist(mem: *const std.mem.Allocator, hoist_token: Token, hoist: Buffer(Token), add: *Token) void {
+	var hoist_index = 0;
+	var hoist_new = Buffer(Token).init(mem.*);
+	while (hoist_index < hoist.items.len){
+		const hoist_token = hoist.items[index];
+		hoist_index += 1;
+		if (applications.get(token.text)) |hoist_expansion| {
+			for hoist_expansion.items) |hoist_add| {
+				hoist_new.append(hoist_add)
+					catch unreachable;
+			}
+		}
+	}
+	//TODO make sure everything applies to tokens with binds in them
+	add.hoist_data = hoist_new;
+	add.hoist_token = hoist_token;
 }
 
 pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, arg: *Arg, expected_pattern: ?Field) ParseError!StringHashMap(Application) {
@@ -7268,5 +6727,3 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 	//stepthrough
 	//backtrack
 
-//TODO the way im doing it isnt recursive
-//TODO make sure that wheres are considered and applied
