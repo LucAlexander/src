@@ -6988,11 +6988,12 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 		const bind = &state.binds.items[bind_index];
 		var token_index = 0;
 		while (token_index < state.program.items.len){
-			old = state.program;
-			state.program = try apply_bind(mem, state, &state.program, &token_index, bind);
-			if (state.program != old){
-				changed = true;
-			}
+			const index = token_index;
+			state.program = apply_bind(mem, state, &state.program, &token_index, bind) catch {
+				token_index = index + 1;
+				continue;
+			};
+			changed = true;
 		}
 		var next_index = bind_index + 1;
 		while (next_index < state.binds.items.len){
@@ -7000,12 +7001,20 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 			if (next.hoist) |*hoist|{
 				var index = 0;
 				while (index < hoist.items.len){
-					next.hoist = try apply_bind(mem, state, hoist, &index, bind);
+					var temp_index = index;
+					next.hoist = apply_bind(mem, state, hoist, &index, bind) catch {
+						index = temp_index + 1;
+						continue;
+					};
 				}
 			}
 			var index = 0;
 			while (index < next.expansion.items.len){
-				next.expansion = try apply_bind(mem, state, &next.expansion, &index, bind);
+				var temp_index = index;
+				next.expansion = apply_bind(mem, state, &next.expansion, &index, bind) catch {
+					index = temp_index + 1;
+					continue;
+				};
 			}
 			next_index += 1;
 		}
@@ -7015,6 +7024,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 }
 
 pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, bind: *Bind) ParseError!*Buffer(Token){
+	const save_index = token_index.*;
 	const applications = StringHashMap(Application).init(mem.*);
 	for (bind.name) |*arg| {
 		const application = apply_arg(mem, state, tokens, token_index, arg, null) catch {
@@ -7026,8 +7036,41 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 				catch unreachable;
 		}
 	}
-	//TODO pattern match and expand
-	//TODO apply wheres and self recursively until settles
+	var new = Buffer(Token).init(mem.*);
+	new.appendSlice(tokens[0..save_index+1])
+		catch unreachable;
+	var index = 0;
+	while (index < bind.expansion.items.len){
+		const token = bind.expansion.items[index];
+		index += 1;
+		if (applications.get(token.text)) | expansion | {
+			for (expansion.items) |add| {
+				new.append(add)
+					catch unreachable;
+			}
+			continue;
+		}
+		new.append(token)
+			catch unreachable;
+	}
+	var changed = true;
+	while (changed){
+		changed = false;
+		for (bind.where.items) |*where| {
+			index = save_index;
+			while (index < token_index.*){
+				const temp_index = index;
+				new = apply_bind(mem, state, new, &index, where) catch {
+					index = temp_index + 1;
+					continue;
+				};
+				changed = true;
+			}
+		}
+		index = save_index;
+	}
+	return new;
+	//TODO recursion?
 }
 
 pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, arg: *Arg, expected_pattern: ?Field) ParseError!StringHashMap(Application) {
