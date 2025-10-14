@@ -483,7 +483,7 @@ const Token = struct {
 	text: []u8,
 	tag: TOKEN,
 	hoist_data: ?*Buffer(Token),
-	hoist_token: ?*Token
+	hoist_token: ?*Field
 };
 
 const ProgramText = struct {
@@ -5641,7 +5641,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 				pass_whitespace(state, token_index);
 				const open = state.program.items[token_index.*];
 				if (open.tag != .OPEN_BRACE){
-					std.debug.print("Expected { to open where clause, found {s}\n", .{open.text});
+					std.debug.print("Expected brace to open where clause, found {s}\n", .{open.text});
 				}
 				token_index.* += 1;
 				while (token_index.* < state.program.items.len){
@@ -5745,11 +5745,11 @@ pub fn parse_field(mem: *const std.mem.Allocator, state: *State, token_index: *u
 	token_index.* += 1;
 	switch (token.tag){
 		.ANY => {
-			return Field {.identifier=.{}};
+			return Field {.identifier={}};
 		},
 		.QUOTE => {
 			var field = Field{
-				.literal=Buffer(Token).init(mem)
+				.literal=Buffer(Token).init(mem.*)
 			};
 			while (token_index.* != state.program.items.len){
 				const innertoken = state.program.items[token_index.*];
@@ -5765,7 +5765,7 @@ pub fn parse_field(mem: *const std.mem.Allocator, state: *State, token_index: *u
 		},
 		.OPEN_PAREN => {
 			return Field{
-				.pattern = try parse_pattern(mem, state, token_index.*, .CLOSE_PAREN)
+				.pattern = try parse_pattern(mem, state, token_index, .CLOSE_PAREN)
 			};
 		},
 		else => {
@@ -5863,7 +5863,7 @@ pub fn show_state(state: *State) void {
 }
 
 pub fn show_bind(bind: *Bind) void {
-	std.debug.print("bind ", {});
+	std.debug.print("bind ", .{});
 	var index: u64 = 0;
 	while (index < bind.name.items.len){
 		show_arg(&bind.name[index]);
@@ -5972,9 +5972,11 @@ pub fn check_binds(state: *State) ParseError!void {
 			try check_arg(state, arg);
 		}
 	}
-	var it = state.patterns.iterator();
+	var it = state.constructors.iterator();
 	while (it.next()) |def| {
-		try check_pattern(state, def.value_ptr);
+		for (def.value_ptr.fields.items) |*field|{
+			try check_field(state, field);
+		}
 	}
 }
 
@@ -6011,7 +6013,7 @@ pub fn check_field(state: *State, field: *Field) ParseError!void {
 		.constructor => {
 			if (state.constructors.get(field.constructor.text)) |_| {}
 			else{
-				std.debug.print("Unknown constructor reference in field: {s}\n", field.constructor.text);
+				std.debug.print("Unknown constructor reference in field: {s}\n", .{field.constructor.text});
 				return ParseError.UnexpectedToken;
 			}
 		},
@@ -6050,7 +6052,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 		while (next_index < state.binds.items.len){
 			const next = &state.binds.items[next_index];
 			if (next.hoist) |*hoist|{
-				var index = 0;
+				var index:u64 = 0;
 				while (index < hoist.items.len){
 					const temp_index = index;
 					next.hoist = apply_bind(mem, state, hoist, &index, bind) catch {
@@ -6059,7 +6061,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 					};
 				}
 			}
-			var index = 0;
+			var index:u64 = 0;
 			while (index < next.expansion.items.len){
 				const temp_index = index;
 				next.expansion = apply_bind(mem, state, &next.expansion, &index, bind) catch {
@@ -6075,10 +6077,10 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 }
 
 pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, bind: *Bind) ParseError!Buffer(Token){
-	const save_index = token_index.*;
+	const save_index:u64 = token_index.*;
 	var new = tokens.*;
 	while (true){
-		const applications = std.StringHashMap(Application).init(mem.*);
+		var applications = std.StringHashMap(Application).init(mem.*);
 		for (bind.name.items) |*arg| {
 			const application = try apply_arg(mem, state, tokens, token_index, arg, null);
 			var it = application.iterator();
@@ -6088,34 +6090,43 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 			}
 		}
 		new = Buffer(Token).init(mem.*);
-		new.appendSlice(tokens[0..save_index+1])
+		new.appendSlice(tokens.items[0..save_index+1])
 			catch unreachable;
-		var index = 0;
+		var index:u64 = 0;
 		var first = true;
 		while (index < bind.expansion.items.len){
-			const token = bind.expansion.items[index];
+			var token = bind.expansion.items[index];
 			index += 1;
 			if (applications.get(token.text)) | expansion | {
 				for (expansion.items) |add| {
+					var copy = add;
 					if (first){
 						first = false;
-						if (bind.hoist_data) |hoist|{
-							var hoist_index = 0;
-							add.hoist_data = apply_bind(mem, state, hoist, &hoist_index, bind);
-							add.hoist_token = bind.hoist_token.?;
+						if (bind.hoist) |_|{
+							var hoist_index:u64 = 0;
+							copy.hoist_data = mem.create(Buffer(Token))
+								catch unreachable;
+							copy.hoist_token = mem.create(Field)
+								catch unreachable;
+							copy.hoist_data.?.* = try apply_bind(mem, state, &bind.hoist.?, &hoist_index, bind);
+							copy.hoist_token.?.* = bind.hoist_field.?;
 						}
 					}
-					new.append(add)
+					new.append(copy)
 						catch unreachable;
 				}
 				continue;
 			}
 			if (first){
 				first = false;
-				if (bind.hoist_data) |hoist|{
-					var hoist_index = 0;
-					token.hoist_data = apply_bind(mem, state, hoist, &hoist_index, bind);
-					token.hoist_token = bind.hoist_token.?;
+				if (bind.hoist) |_|{
+					var hoist_index:u64 = 0;
+					token.hoist_data = mem.create(Buffer(Token))
+						catch unreachable;
+					token.hoist_token = mem.create(Field)
+						catch unreachable;
+					token.hoist_data.?.* = try apply_bind(mem, state, &bind.hoist.?, &hoist_index, bind);
+					token.hoist_token.?.* = bind.hoist_field.?;
 				}
 			}
 			new.append(token)
@@ -6128,7 +6139,7 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 				index = save_index;
 				while (index < token_index.*){
 					const temp_index = index;
-					new = apply_bind(mem, state, new, &index, where) catch {
+					new = apply_bind(mem, state, &new, &index, where) catch {
 						index = temp_index + 1;
 						continue;
 					};
@@ -6142,10 +6153,10 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 }
 
 pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, arg: *Arg, expected_pattern: ?Field) ParseError!std.StringHashMap(Application) {
-	const applications = std.StringHashMap(Application).init(mem.*);
+	var applications = std.StringHashMap(Application).init(mem.*);
 	switch (arg.*){
 		.constructor => {
-			if (state.constructors.get(arg.constructor.name.text)) |cons| { // TODO uh on
+			if (state.constructors.get(arg.constructor.name.text)) |cons| {
 				if (cons.fields.items.len != arg.constructor.args.items.len){
 					std.debug.print("Expected {} args for {s} argument, found {}\n", .{cons.fields.items.len, arg.constructor.name.text, arg.constructor.args.items.len});
 					return ParseError.UnexpectedToken;
@@ -6178,7 +6189,7 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 							std.debug.print("Field literal and arg literal differ in length\n", .{});
 							return ParseError.UnexpectedToken;
 						}
-						for (arg.literal.items, exp.literal.items) |a, e| {
+						for (arg.literal.items, exp.literal.items) |*a, *e| {
 							if (!token_equal(a, e)){
 								return ParseError.UnexpectedToken;
 							}
@@ -6191,27 +6202,29 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 				}
 			}
 			for (arg.literal.items) |tok| {
-				const token = tokens.items[token_index.*];
-				if (!token_equal(tok, token)) {
+				var token = tokens.items[token_index.*];
+				var copy = tok;
+				if (!token_equal(&copy, &token)) {
 					return ParseError.UnexpectedToken;
 				}
 				token_index.* += 1;
 			}
 		},
 		.name => {
-			const save = token_index.*;
-			try apply_field(mem, state, tokens, token_index, expected_pattern);
-			const instance = Application.init(mem.*);
-			instance.appendSlice(tokens[save .. token_index.*])
+			const save:u64 = token_index.*;
+			try apply_field(mem, state, tokens, token_index, &expected_pattern.?);
+			var instance = Application.init(mem.*);
+			instance.appendSlice(tokens.items[save .. token_index.*])
 				catch unreachable;
-			applications.put(arg.name, instance)
+			applications.put(arg.name.text, instance)
 				catch unreachable;
 		}
 	}
+	return applications;
 }
 
-pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, field: *Field) ParseError!void {
-	switch (field){
+pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, field: *const Field) ParseError!void {
+	switch (field.*){
 		.identifier => {
 			token_index.* += 1;
 		},
@@ -6224,8 +6237,9 @@ pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer
 		},
 		.literal => {
 			for (field.literal.items) |tok| {
-				const token = tokens.items[token_index.*];
-				if (!token_equal(tok, token)){
+				var token = tokens.items[token_index.*];
+				var copy = tok;
+				if (!token_equal(&copy, &token)){
 					return ParseError.UnexpectedToken;
 				}
 				token_index.* += 1;
@@ -6247,16 +6261,16 @@ pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer
 
 pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, field: *Field, args: Buffer(Arg)) ParseError!std.StringHashMap(Application) {
 	var applications = std.StringHashMap(Application).init(mem.*);
-	switch (field){
+	switch (field.*){
 		.identifier => {
-			if (args.len > 1){
+			if (args.items.len > 1){
 				return ParseError.UnexpectedToken;
 			}
 			if (args.items[0] != .name){
 				return ParseError.UnexpectedToken;
 			}
 			const token = tokens.items[token_index.*];
-			const instance = Application.init(mem.*);
+			var instance = Application.init(mem.*);
 			instance.append(token)
 				catch unreachable;
 			applications.put(args.items[0].name.text, instance)
@@ -6266,7 +6280,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 		},
 		.constructor => {
 			if (state.constructors.get(field.constructor.text)) |cons| {
-				if (cons.field.items.len != args.items.len){
+				if (cons.fields.items.len != args.items.len){
 					return ParseError.UnexpectedToken;
 				}
 				for (cons.fields.items, args.items) |inner, *arg| {
@@ -6282,7 +6296,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 			unreachable;
 		},
 		.literal => {
-			if (args.len > 1){
+			if (args.items.len > 1){
 				return ParseError.UnexpectedToken;
 			}
 			if (args.items[0] != .name){
@@ -6290,21 +6304,22 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 			}
 			const save = token_index.*;
 			for (field.literal.items) |tok| {
-				const token = tokens.items[token_index.*];
-				if (!token_equal(tok, token)){
+				var token = tokens.items[token_index.*];
+				var copy = tok;
+				if (!token_equal(&copy, &token)){
 					return ParseError.UnexpectedToken;
 				}
 				token_index.* += 1;
 			}
-			const instance = Application.init(mem.*);
-			instance.appendSlice(tokens[save..token_index])
+			var instance = Application.init(mem.*);
+			instance.appendSlice(tokens.items[save..token_index.*])
 				catch unreachable;
-			applications.put(args.items[0].name.text, tokens[save..token_index.*])
+			applications.put(args.items[0].name.text, instance)
 				catch unreachable;
 			return applications;
 		},
 		.pattern => {
-			outer: for (field.pattern) |cons| {
+			outer: for (field.pattern.items) |cons| {
 				const save = token_index.*;
 				for (cons.fields.items) |*inner| {
 					apply_field(mem, state, tokens, token_index, inner) catch {
@@ -6313,12 +6328,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 					};
 				}
 				for (cons.fields.items) |*inner| {
-					const application = try apply_field(mem, state, tokens, token_index, inner);
-					var it = application.iterator();
-					while (it.next()) |app| {
-						applications.put(app.key_ptr.*, app.value_ptr.*)
-							catch unreachable;
-					}
+					try apply_field(mem, state, tokens, token_index, inner);
 				}
 				return applications;
 			}
