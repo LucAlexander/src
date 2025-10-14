@@ -6343,7 +6343,12 @@ pub fn show_pattern_def(def: PatternDef) void {
 pub fn parse(mem: *const std.mem.Allocator, state: *State) ParseError!State {
 	var new = try parse_binds(mem, state);
 	try check_binds(new);
-	while (try apply_binds(mem, new)){}
+	while (true){
+		while (try apply_binds(mem, new)){}
+		if (!concat_pass(mem, new)){
+			break;
+		}
+	}
 }
 
 pub fn check_binds(state: *State) ParseError!void {
@@ -6480,7 +6485,9 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 					if (first){
 						first = false;
 						if (bind.hoist_data) |hoist|{
-							apply_hoist(mem, bind.hoist_token, hoist, &add);
+							var hoist_index = 0;
+							add.hoist_data = apply_bind(mem, state, hoist, &hoist_index, bind);
+							add.hoist_token = bind.hoist_token.?;
 						}
 					}
 					new.append(add)
@@ -6491,13 +6498,17 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 			if (first){
 				first = false;
 				if (bind.hoist_data) |hoist|{
-					apply_hoist(mem, bind.hoist_token, hoist, &token);
+					var hoist_index = 0;
+					add.hoist_data = apply_bind(mem, state, hoist, &hoist_index, bind);
+					add.hoist_token = bind.hoist_token.?;
 				}
 			}
 			new.append(token)
 				catch unreachable;
 		}
+		var changed = true; 
 		while (changed){
+			changed = false;
 			for (bind.where.items) |*where| {
 				index = save_index;
 				while (index < token_index.*){
@@ -6506,30 +6517,13 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 						index = temp_index + 1;
 						continue;
 					};
+					changed = true;
 				}
 			}
 			index = save_index;
 		}
 	}
 	return new;
-}
-
-pub fn apply_hoist(mem: *const std.mem.Allocator, hoist_token: Token, hoist: Buffer(Token), add: *Token) void {
-	var hoist_index = 0;
-	var hoist_new = Buffer(Token).init(mem.*);
-	while (hoist_index < hoist.items.len){
-		const hoist_token = hoist.items[index];
-		hoist_index += 1;
-		if (applications.get(token.text)) |hoist_expansion| {
-			for hoist_expansion.items) |hoist_add| {
-				hoist_new.append(hoist_add)
-					catch unreachable;
-			}
-		}
-	}
-	//TODO make sure everything applies to tokens with binds in them
-	add.hoist_data = hoist_new;
-	add.hoist_token = hoist_token;
 }
 
 pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, arg: *Arg, expected_pattern: ?Field) ParseError!StringHashMap(Application) {
@@ -6721,9 +6715,15 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 	return applications;
 }
 
+pub fn concat_pass(mem: std.mem.Allocator, state: *State) bool {
+	var changed = false;
+	return changed;
+}
+
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 	//breakpoints
 	//stepthrough
 	//backtrack
+//TODO memory optimization with aux buffers
 
