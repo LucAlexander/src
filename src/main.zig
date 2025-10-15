@@ -6113,10 +6113,17 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 	var initial = true;
 	while (true){
 		var applications = std.StringHashMap(Application).init(mem.*);
+		const saved_index = token_index.*;
 		for (bind.name.items) |*arg| {
 			const application = apply_arg(mem, state, tokens, token_index, arg, null) catch |err| {
 				if (initial){
 					return err;
+				}
+				token_index.* = saved_index;
+				while (token_index.* < tokens.items.len){
+					new.append(tokens.items[token_index.*])
+						catch unreachable;
+					token_index.* += 1;
 				}
 				return new;
 			};
