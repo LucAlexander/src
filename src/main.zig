@@ -449,14 +449,7 @@ const TOKEN = enum {
 	IDENTIFIER,
 	OPEN_BRACK, CLOSE_BRACK,
 	OPEN_BRACE, CLOSE_BRACE,
-	ALTERNATE,
-	ARGUMENT,
-	IS_OF,
-	ELIPSES,
-	BYTE_ELIPSES,
-	EXCLUSION,
-	OPTIONAL,
-	UNIQUE,
+	PIPE,
 	HOIST,
 	PATTERN,
 	WHERE,
@@ -464,7 +457,6 @@ const TOKEN = enum {
 	QUOTE,
 	LIT,
 	EQUAL,
-	PIPE,
 	SEMI,
 	OPEN_PAREN,
 	CLOSE_PAREN,
@@ -496,9 +488,9 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	var token_map = std.StringHashMap(TOKEN).init(mem.*);
 	token_map.put("bind", .BIND) catch unreachable;
 	token_map.put("using_opinion", .USING) catch unreachable;
-	token_map.put("...", .ELIPSES) catch unreachable;
-	token_map.put(",,,", .BYTE_ELIPSES) catch unreachable;
-	token_map.put(";;;", .HOIST) catch unreachable;
+	token_map.put("hoist",.HOIST) catch unreachable;
+	token_map.put("pattern",.PATTERN) catch unreachable;
+	token_map.put("where",.WHERE) catch unreachable;
 	var tokens = Buffer(Token).init(mem.*);
 	while (i<text.len){
 		var escape = false;
@@ -520,17 +512,17 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				'}' => {break :blk .CLOSE_BRACE;},
 				'[' => {break :blk .OPEN_BRACK;},
 				']' => {break :blk .CLOSE_BRACK;},
-				'|' => {break :blk .ALTERNATE;},
-				'?' => {break :blk .OPTIONAL;},
+				'|' => {break :blk .PIPE;},
 				'$' => {break :blk .LINE_END;},
 				'#' => {break :blk .CONCAT;},
 				'%' => {break :blk .WHITESPACE;},
-				'@' => {break :blk .UNIQUE;},
 				'!' => {break :blk .LIT;},
-				':' => {break :blk .IS_OF;},
-				'+' => {break :blk .ARGUMENT;},
-				'-' => {break :blk .EXCLUSION;},
 				'=' => {break :blk .EQUAL;},
+				'(' => {break :blk .OPEN_PAREN;},
+				')' => {break :blk .CLOSE_PAREN;},
+				'*' => {break :blk .ANY;},
+				'\'' => {break :blk .QUOTE;},
+				';' => {break :blk .SEMI;},
 				else => {break :blk .IDENTIFIER;}
 			}
 			break :blk .IDENTIFIER;
@@ -551,11 +543,6 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 					size += 1;
 				}
 				break :blk text[i..i+size];
-			}
-			while (i+size < text.len and (!std.ascii.isWhitespace(text[i+size])
-				                     and !std.ascii.isAlphanumeric(text[i+size])
-									 and text[i+size] != '\\')){
-				size += 1;
 			}
 			break :blk text[i..i+size];
 		};
@@ -6379,4 +6366,6 @@ pub fn concat_pass(mem: *const std.mem.Allocator, state: *State) bool {
 	//stepthrough
 	//backtrack
 //TODO memory optimization with aux buffers
+//TODO reintroduce unique identifiers in a different way
+//TODO whitespace handling
 
