@@ -449,6 +449,7 @@ const TOKEN = enum {
 	IDENTIFIER,
 	OPEN_BRACK, CLOSE_BRACK,
 	OPEN_BRACE, CLOSE_BRACE,
+	UNIQUE,
 	PIPE,
 	HOIST,
 	PATTERN,
@@ -513,6 +514,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				'[' => {break :blk .OPEN_BRACK;},
 				']' => {break :blk .CLOSE_BRACK;},
 				'|' => {break :blk .PIPE;},
+				'@' => {break :blk .UNIQUE;},
 				'$' => {break :blk .LINE_END;},
 				'#' => {break :blk .CONCAT;},
 				'%' => {break :blk .WHITESPACE;},
@@ -5516,7 +5518,8 @@ const Arg = union(enum) {
 		args: Buffer(Arg)
 	},
 	literal: Buffer(Token),
-	name: Token
+	name: Token,
+	unique: Token
 };
 
 const Application = Buffer(Token);
@@ -5720,6 +5723,15 @@ pub fn parse_arg(mem: *const std.mem.Allocator, state: *State, token_index: *u64
 		}
 		return arg;
 	}
+	else if (open.tag == .UNIQUE){
+		token_index.* += 1;
+		const token = state.program.items[token_index.*];
+		token_index.* += 1;
+		const arg = Arg{
+			.unique = token
+		};
+		return arg;
+	}
 	else {
 		token_index.* += 1;
 		const arg = Arg {
@@ -5909,6 +5921,9 @@ pub fn show_arg(arg: *Arg) void {
 		},
 		.name => {
 			std.debug.print("{s} ", .{arg.name.text});
+		},
+		.unique => {
+			std.debug.print("@{s} ", .{arg.unique.text});
 		}
 	}
 }
@@ -6286,6 +6301,14 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 				applications.put(arg.name.text, instance)
 					catch unreachable;
 			}
+		},
+		.unique => {
+			var instance = Application.init(mem.*);
+			instance.append(Token{.tag=.IDENTIFIER, .text=new_uid(mem), .hoist_data=null, .hoist_token = null})
+				catch unreachable;
+			applications.put(arg.unique.text, instance)
+				catch unreachable;
+			return applications;
 		}
 	}
 	return applications;
