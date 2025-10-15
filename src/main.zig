@@ -687,36 +687,6 @@ pub fn to_byte_token_slice(mem: *const std.mem.Allocator, c: u8) []u8 {
 	return text;
 }
 
-pub fn move_data(run: *Buffer(Token), comp: *const Buffer(Token), mem: *const std.mem.Allocator) ParseError!void {
-	var token_index: u64 = 0;
-	while (token_index < comp.items.len){
-		skip_whitespace(comp.items, &token_index) catch {
-			return;
-		};
-		if (token_index > comp.items.len){
-			std.debug.print("Expected instruction data, found end of file\n", .{});
-			return ParseError.UnexpectedEOF;
-		}
-		var token = comp.items[token_index];
-		token_index += 1;
-		if (token.tag == .COMP_MOVE){
-			const loc = try parse_location(mem, comp, &token_index);
-			token = comp.items[token_index];
-			token_index += 1;
-			if (token.tag != .COMP_MOVE){
-				std.debug.print("Expected end of comp time move location, found {s}\n", .{token.text});
-				return ParseError.UnexpectedToken;
-			}
-			token = mk_token_from_u64(mem, val64(loc) catch |err| {
-				std.debug.print("Encountered error in comptime move value {}\n", .{err});
-				return ParseError.UnexpectedToken;
-			});
-		}
-		run.append(token)
-			catch unreachable;
-	}
-}
-
 pub fn mk_token_from_u64(mem: *const std.mem.Allocator, val: u64) Token {
 	const buf = mem.alloc(u8, 20) catch unreachable;
 	const slice = std.fmt.bufPrint(buf, "{}", .{val}) catch unreachable;
@@ -839,10 +809,6 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				skip_whitespace(tokens.items, token_index) catch {
 					return output;
 				};
-				token_index.* += 1;
-				skip_whitespace(tokens.items, token_index) catch {
-					return output;
-				};
 				const name = tokens.items[token_index.*];
 				token_index.* += 1;
 				if (name.tag != .IDENTIFIER){
@@ -948,10 +914,6 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					return i;
 				},
 				.BIND => {
-					skip_whitespace(tokens.items, token_index) catch {
-						continue :outer;
-					};
-					token_index.* += 1;
 					skip_whitespace(tokens.items, token_index) catch {
 						continue :outer;
 					};
@@ -5575,7 +5537,14 @@ pub fn parse_binds(mem: *const std.mem.Allocator, state: *State) ParseError!Stat
 	while (token_index < state.program.items.len){
 		const token = state.program.items[token_index];
 		if (token.tag == .BIND){
-			new.binds.append(try parse_bind(mem, state, &token_index))
+			const save_index = token_index;
+			const bind = parse_bind(mem, state, &token_index) catch {
+				new.program.append(token)
+					catch unreachable;
+				token_index = save_index+1;
+				continue;
+			};
+			new.binds.append(bind)
 				catch unreachable;
 			continue;
 		}
@@ -5611,6 +5580,11 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 		}
 		bind.name.append(try parse_arg(mem, state, token_index))
 			catch unreachable;
+	}
+	if (bind.name.items.len == 1){
+		if (bind.name.items[0] == .name){
+			return ParseError.UnexpectedToken;
+		}
 	}
 	try pass_whitespace(state, token_index);
 	const noteq = state.program.items[token_index.*];
@@ -6525,5 +6499,6 @@ pub fn concat_pass(mem: *const std.mem.Allocator, state: *State) bool {
 	//stepthrough
 	//backtrack
 //TODO memory optimization with aux buffers
-//TODO reintroduce unique identifiers in a different way
+
+//TODO differentiate run bind parsing somehow
 
