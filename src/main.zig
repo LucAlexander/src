@@ -6110,10 +6110,16 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, bind: *Bind) ParseError!Buffer(Token){
 	const save_index:u64 = token_index.*;
 	var new = tokens.*;
+	var initial = true;
 	while (true){
 		var applications = std.StringHashMap(Application).init(mem.*);
 		for (bind.name.items) |*arg| {
-			const application = try apply_arg(mem, state, tokens, token_index, arg, null);
+			const application = apply_arg(mem, state, tokens, token_index, arg, null) catch |err| {
+				if (initial){
+					return err;
+				}
+				return new;
+			};
 			var it = application.iterator();
 			while (it.next()) |app| {
 				applications.put(app.key_ptr.*, app.value_ptr.*)
@@ -6121,7 +6127,7 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 			}
 		}
 		new = Buffer(Token).init(mem.*);
-		new.appendSlice(tokens.items[0..save_index+1])
+		new.appendSlice(tokens.items[0..save_index])
 			catch unreachable;
 		var index:u64 = 0;
 		var first = true;
@@ -6179,17 +6185,16 @@ pub fn apply_bind(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(
 			}
 			index = save_index;
 		}
+		initial = false;
 	}
 	return new;
 }
 
 pub fn whitespace_works_out(a: *Token, b: *Token) bool {
-	if ((a.tag == .WHITESPACE and std.mem.eql(u8, b.text, " ")) or
-		(a.tag == .WHITESPACE and std.mem.eql(u8, b.text, "\t")) or
-		(a.tag == .WHITESPACE and std.mem.eql(u8, b.text, "\n")) or
-		(a.tag == .WHITESPACE and std.mem.eql(u8, b.text, "\r")) or
-		(a.tag == .NEW_LINE and std.mem.eql(u8, b.text, "\n")) or
-		(a.tag == .SPACE and std.mem.eql(u8, b.text, " "))
+	if ((a.tag == .WHITESPACE and b.tag == .TAB) or
+		(a.tag == .WHITESPACE and b.tag == .NEW_LINE) or
+		(a.tag == .WHITESPACE and b.tag == .SPACE) or
+		(a.tag == .LINE_END and b.tag == .NEW_LINE)
 	){
 		return true;
 	}
