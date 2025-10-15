@@ -6499,6 +6499,3 @@ pub fn concat_pass(mem: *const std.mem.Allocator, state: *State) bool {
 	//stepthrough
 	//backtrack
 //TODO memory optimization with aux buffers
-
-//TODO differentiate run bind parsing somehow
-
