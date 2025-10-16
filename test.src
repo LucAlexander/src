@@ -1,0 +1,42 @@
+pattern Comment = Comment '//' Anything_EOL;
+pattern Anything_EOL = EOL '$'
+                     | Anything * Anything_EOL;
+
+bind (Comment '//' anything) = ;
+
+pattern CompSegment = CompSegment 'comptime' '{' UntilRun;
+pattern UntilRun = Run '}'
+                 | MidRun '{' UntilRun UntilRun
+                 | Until * UntilRun;
+
+bind 'BlockRun' (Until text next) = text BlockRun next;
+bind 'BlockRun' (Run '}') = ;
+bind 'BlockRun' (MidRun '{' next after) = BlockRun next BlockRun after;
+
+bind (CompSegment 'comptime' '{' rest) =
+	comp
+	BlockRun rest
+	mov r0 !1
+	int	
+	run
+;
+
+pattern UntilIn = In 'in'
+                | Untilin * UntilIn;
+
+bind 'let' (* name) '=' (UntilIn value) '{' (UntilRun body) =
+	comptime {
+		BlockRun Body
+	}
+	bind name = BlockIn value
+where
+	bind 'BlockIn' (Untilin text next) = text BlockIn next;
+	bind 'BlockIn' (In 'in') = ;
+;
+
+let syscall = r1 in {
+	mov r1 !1
+}
+mov r0 !syscall
+// mov r0 !2
+int
