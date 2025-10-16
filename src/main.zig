@@ -4876,9 +4876,8 @@ pub fn cmp_ii_bytes(ip: *align(1) u64) bool {
 pub fn cmp_il_bytes(ip: *align(1) u64) bool {
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
-	const right_name = args >> 32;
+	const right = args >> 32;
 	const left = vm.words[left_name >> 3];
-	const right = vm.words[right_name >> 3];
 	if (left > right){
 		vm.mem[vm.sr] = 1;
 	}
