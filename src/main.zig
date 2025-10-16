@@ -5532,7 +5532,12 @@ pub fn pass_whitespace(state: *State, token_index: *u64) ParseError!void {
 }
 
 pub fn parse_binds(mem: *const std.mem.Allocator, state: *State) ParseError!State {
-	var new = State.init(mem);
+	var new = State{
+		.binds = state.binds,
+		.patterns = state.patterns,
+		.constructors = state.constructors,
+		.program = Buffer(Token).init(mem.*)
+	};
 	var token_index: u64 = 0;
 	while (token_index < state.program.items.len){
 		const token = state.program.items[token_index];
@@ -5591,6 +5596,13 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 	std.debug.assert(noteq.tag != .EQUAL);
 	while (token_index.* < state.program.items.len){
 		const token = state.program.items[token_index.*];
+		if (token.tag == .BIND){
+			const save = token_index.*;
+			_ = parse_bind(mem, state, token_index) catch {};
+			bind.expansion.appendSlice(state.program.items[save..token_index.*])
+				catch unreachable;
+			continue;
+		}
 		if (token.tag == .HOIST){
 			bind.hoist_field = try parse_field(mem, state, token_index);
 			bind.hoist = bind.expansion;
@@ -5959,28 +5971,46 @@ pub fn show_pattern_def(def: *PatternDef) void {
 }
 
 pub fn parse(mem: *const std.mem.Allocator, state: *State) ParseError!State {
-	var new = try parse_binds(mem, state);
-	show_state(&new);
-	if (debug){
-		std.debug.print("initial state ----------------\n", .{});
-	}
-	try check_binds(&new);
+	var bind_count: u64 = 0;
+	var old = state.*;
 	while (true){
-		while (try apply_binds(mem, &new)){
+		var new = try parse_binds(mem, &old);
+		if (new.binds.items.len == bind_count){
+			return new;
+		}
+		bind_count = new.binds.items.len;
+		show_state(&new);
+		if (debug){
+			std.debug.print("initial state ----------------\n", .{});
+		}
+		try check_binds(&new);
+		inner: while (true){
+			while (try apply_binds(mem, &new)){
+				show_state(&new);
+				if (debug){
+					std.debug.print("applied-------------------\n", .{});
+				}
+			}
+			const prehoist_len = new.program.items.len;
+			new.program = try expand_hoists(mem, &new);
+			if (new.program.items.len != prehoist_len){
+				continue :inner;
+			}
 			show_state(&new);
 			if (debug){
-				std.debug.print("applied-------------------\n", .{});
+				std.debug.print("hoisted ---------------------\n", .{});
+			}
+			if (!concat_pass(mem, &new)){
+				break;
+			}
+			show_state(&new);
+			if (debug){
+				std.debug.print("concatenated-------------------\n", .{});
 			}
 		}
-		if (!concat_pass(mem, &new)){
-			break;
-		}
-		if (debug){
-			std.debug.print("concatenated-------------------\n", .{});
-		}
-		show_state(&new);
+		old = new;
 	}
-	return new;
+	unreachable;
 }
 
 pub fn check_binds(state: *State) ParseError!void {
@@ -6491,6 +6521,55 @@ pub fn concat_pass(mem: *const std.mem.Allocator, state: *State) bool {
 	}
 	state.program = new;
 	return changed;
+}
+
+pub fn expand_hoists(mem: *const std.mem.Allocator, state: *State) ParseError!Buffer(Token) {
+	var token_index:u64 = 0;
+	var new = Buffer(Token).init(mem.*);
+	outer: while (token_index < state.program.items.len){
+		const token = &state.program.items[token_index];
+		if (token.hoist_token) |target| {
+			var backtrack_index = new.items.len;
+			while (backtrack_index > 0){
+				var index = backtrack_index-1;
+				apply_field(mem, state, &new, &index, target) catch {
+					backtrack_index -= 1;
+					continue;
+				};
+				const offset_buffer = new.items[backtrack_index-1..];
+				new.items.len = backtrack_index-1;
+				new.appendSlice(token.hoist_data.?.items)
+					catch unreachable;
+				new.appendSlice(offset_buffer)
+					catch unreachable;
+				var copy = token.*;
+				copy.hoist_data = null;
+				copy.hoist_token = null;
+				new.append(copy)
+					catch unreachable;
+				token_index += 1;
+				continue :outer;
+			}
+			//reached top
+			const offset_buffer = new.items[0..];
+			new.items.len = 0;
+			new.appendSlice(token.hoist_data.?.items)
+				catch unreachable;
+			new.appendSlice(offset_buffer)
+				catch unreachable;
+			var copy = token.*;
+			copy.hoist_data = null;
+			copy.hoist_token = null;
+			new.append(copy)
+				catch unreachable;
+			token_index += 1;
+			continue :outer;
+		}
+		new.append(token.*)
+			catch unreachable;
+		token_index += 1;
+	}
+	return new;
 }
 
 //TODO think about debugging infrastructure
