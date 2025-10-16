@@ -882,14 +882,6 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				skip_whitespace(tokens.items, token_index) catch {
 					return output;
 				};
-				if (tokens.items[token_index.*].tag != .EQUAL){
-					set_error(token_index.*, tokens.items[token_index.*], "Expected = for transfer bind, found {s}\n", .{tokens.items[token_index.*].text});
-					return ParseError.UnexpectedToken;
-				}
-				token_index.* += 1;
-				skip_whitespace(tokens.items, token_index) catch {
-					return output;
-				};
 				const comp_stack = comp_section;
 				comp_section = true;
 				const loc = try parse_location(mem, tokens, token_index);
@@ -986,15 +978,6 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 						set_error(token_index.*-1, name, "Expected name for transfer bind, found {s}\n", .{name.text});
 						return ParseError.UnexpectedToken;
 					}
-					skip_whitespace(tokens.items, token_index) catch {
-						continue :outer;
-					};
-					if (tokens.items[token_index.*].tag != .EQUAL){
-						set_error(token_index.*, tokens.items[token_index.*], "Expected = for transfer bind, found {s}\n", .{tokens.items[token_index.*].text});
-						error_index = token_index.*;
-						return ParseError.UnexpectedToken;
-					}
-					token_index.* += 1;
 					skip_whitespace(tokens.items, token_index) catch {
 						continue :outer;
 					};
@@ -6707,5 +6690,3 @@ pub fn set_error(index: u64, token: ?Token, comptime fmt: []const u8, args: anyt
 	//stepthrough
 	//backtrack
 	//inspect memory address
-//TODO memory optimization with aux buffers
-//TODO parametrics?
