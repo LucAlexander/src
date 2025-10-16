@@ -672,6 +672,10 @@ pub fn report_error(original: Buffer(Token), current: ?Buffer(Token)) void {
 	const stderr = std.io.getStdErr().writer();
 	stderr.print("{s}\n", .{error_buffer[0..error_buffer_len]}) catch unreachable;
 	var line:u64 = 1;
+	var offset:u64 = 8;
+	if (error_index < offset){
+		offset = error_index-1;
+	}
 	if (error_token) |tok| {
 		var token_index: u64 = 0;
 		if (current) |expansion|{
@@ -679,7 +683,7 @@ pub fn report_error(original: Buffer(Token), current: ?Buffer(Token)) void {
 			while (token_index < expansion.items.len){
 				const token = expansion.items[token_index];
 				token_index += 1;
-				if (token_index-1 > error_index - 8 and token_index-1 < error_index + 8){
+				if (token_index-1 > error_index - offset and token_index-1 < error_index + 8){
 					if (token_index-1 == error_index){
 						stderr.print("\x1b[4m{s}\x1b[0m", .{token.text}) catch unreachable;
 					}
@@ -687,7 +691,7 @@ pub fn report_error(original: Buffer(Token), current: ?Buffer(Token)) void {
 						stderr.print("{s}", .{token.text}) catch unreachable;
 					}
 				}
-				if (token_index > error_index - 8 and token_index < error_index + 8){
+				if (token_index > error_index - offset and token_index < error_index + 8){
 					if (token.tag == .NEW_LINE){
 						line += 1;
 						stderr.print("{d:06} | ", .{line}) catch unreachable;
@@ -5931,6 +5935,12 @@ pub fn show_bind(bind: *Bind) void {
 		std.debug.print("\n", .{});
 	}
 	show_tokens(bind.expansion);
+	if (bind.where.items.len != 0){
+		std.debug.print("where\n", .{});
+		for (bind.where.items) |*where| {
+			show_bind(where);
+		}
+	}
 	std.debug.print("\n", .{});
 }
 
@@ -6155,6 +6165,7 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 			changed = true;
 		}
 		var next_index:u64 = bind_index + 1;
+		bind_index += 1;
 		while (next_index < state.binds.items.len){
 			const next = &state.binds.items[next_index];
 			if (next.hoist) |*hoist|{
@@ -6177,7 +6188,6 @@ pub fn apply_binds(mem: *const std.mem.Allocator, state: *State) ParseError!bool
 			}
 			next_index += 1;
 		}
-		bind_index += 1;
 	}
 	return changed;
 }
@@ -6343,6 +6353,7 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 					}
 				}
 			}
+			try skip_whitespace(tokens.items, token_index);
 			for (arg.literal.items) |tok| {
 				var token = tokens.items[token_index.*];
 				var copy = tok;
@@ -6425,6 +6436,7 @@ pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer
 			}
 		},
 		.literal => {
+			try skip_whitespace(tokens.items, token_index);
 			for (field.literal.items) |tok| {
 				if (token_index.* >= tokens.items.len){
 					set_error(token_index.*, tokens.items[tokens.items.len-1], "Unexpected EOF in literal parse\n", .{});
@@ -6533,6 +6545,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 				set_error(0, null, "Expected name argument to match literal field\n", .{});
 				return ParseError.UnexpectedToken;
 			}
+			try skip_whitespace(tokens.items, token_index);
 			const save = token_index.*;
 			for (field.literal.items) |tok| {
 				var token = tokens.items[token_index.*];
@@ -6682,3 +6695,4 @@ pub fn set_error(index: u64, token: ?Token, comptime fmt: []const u8, args: anyt
 	//backtrack
 	//inspect memory address
 //TODO memory optimization with aux buffers
+//TODO whitespace starting literals dont work
