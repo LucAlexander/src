@@ -640,9 +640,9 @@ pub fn show_tokens(tokens: Buffer(Token)) void {
 	}
 	for (tokens.items) |*token| {
 		if (token.hoist_data) |_| {
-			std.debug.print("* ", .{});
+			std.debug.print("*", .{});
 		}
-		std.debug.print("{s} ", .{token.text});
+		std.debug.print("{s}", .{token.text});
 	}
 	std.debug.print("\n", .{});
 }
@@ -1297,7 +1297,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					};
 				},
 				else => {
-					set_error(token_index.*, token, "Expected opcode, found {s}\n", .{token.text});
+					set_error(token_index.*-1, token, "Expected opcode, found {s}\n", .{token.text});
 					return ParseError.UnexpectedToken;
 				}
 			}
@@ -5681,6 +5681,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 				try pass_whitespace(state, token_index);
 				const next = state.program.items[token_index.*];
 				if (next.tag == .SEMI){
+					token_index.* += 1;
 					break;
 				}
 				bind.where.append(try parse_bind(mem, state, token_index))
@@ -5688,6 +5689,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 			}
 			return bind;
 		}
+		token_index.* += 1;
 		bind.expansion.append(token)
 			catch unreachable;
 	}
@@ -6394,6 +6396,7 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(Token), token_index: *u64, field: *const Field) ParseError!void {
 	switch (field.*){
 		.identifier => {
+			try skip_whitespace(tokens.items, token_index);
 			token_index.* += 1;
 		},
 		.constructor => {
@@ -6465,6 +6468,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 				set_error(0, null, "Expected name argument for identifier field\n", .{});
 				return ParseError.UnexpectedToken;
 			}
+			try skip_whitespace(tokens.items, token_index);
 			const token = tokens.items[token_index.*];
 			var instance = Application.init(mem.*);
 			instance.append(token)
@@ -6672,7 +6676,6 @@ pub fn set_error(index: u64, token: ?Token, comptime fmt: []const u8, args: anyt
 	error_token = token;
 }
 
-//TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 	//breakpoints
 	//stepthrough
