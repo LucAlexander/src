@@ -4,6 +4,11 @@ const Buffer = std.ArrayList;
 
 const debug = true;
 
+var error_index:u64 = 0;
+var error_buffer: [512]u8 = undefined;
+var error_buffer_len: u64 = 0;
+var error_token: ?Token = null;
+
 var uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 var iden_hashes = std.StringHashMap(u64).init(std.heap.page_allocator);
@@ -60,6 +65,7 @@ var frame_buffer_image = rl.Image{
 	.mipmaps=1,
 	.format=rl.PixelFormat.uncompressed_r8g8b8a8
 };
+
 var frame_buffer_texture:rl.Texture = undefined;
 
 pub fn main() !void {
@@ -324,12 +330,14 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 	};
 	state = parse(mem, &state) catch |err| {
 		std.debug.print("Parse / apply error: {}\n", .{err});
+		report_error();
 		return null;
 	};
 	var index:u64 = 0;
 	if (headless) |filename| {
 		const stream = parse_plugin(mem, &state.program, &index, false) catch |err| {
 			std.debug.print("Headless Plugin Parse Error: {} \n", .{err});
+			report_error();
 			return null;
 		};
 		var out = std.fs.cwd().createFile(filename, .{.truncate=true}) catch {
@@ -352,6 +360,7 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 	var runtime = VM.init();
 	const program_len = parse_bytecode(mem, runtime.mem[start_ip..], &state.program, &index, false) catch |err| {
 		std.debug.print("Bytecode Parse Error {}\n", .{err});
+		report_error();
 		return null;
 	};
 	vm = runtime;
@@ -369,7 +378,7 @@ pub fn import_flatten(mem: *const std.mem.Allocator, input_tokens: *Buffer(Token
 	var tokens = input_tokens;
 	const allocator = std.heap.page_allocator;
 	var new = mem.create(Buffer(Token)) catch {
-		std.debug.print("could not allocate aux buffer for import flatten\n", .{});
+		set_error(0, null, "could not allocate aux buffer for import flatten\n", .{});
 		return ParseError.FileError;
 	};
 	new.* = Buffer(Token).init(mem.*);
@@ -386,11 +395,11 @@ pub fn import_flatten(mem: *const std.mem.Allocator, input_tokens: *Buffer(Token
 				token_index += 1;
 				const buffer = mem.alloc(u8, 64) catch unreachable;
 				const infile = std.fmt.bufPrint(buffer, "{s}{s}", .{filename.text, ".src"}) catch {
-					std.debug.print("Unable to allcoate filename {s}{s}\n", .{filename.text, ".src"});
+					set_error(token_index-1, filename, "Unable to allocate filename {s}{s}\n", .{filename.text, ".src"});
 					return ParseError.FileError;
 				};
 				var file = std.fs.cwd().openFile(infile, .{}) catch {
-					std.debug.print("File not found: {s}\n", .{infile});
+					set_error(token_index-1, filename, "File not found: {s}\n", .{infile});
 					return ParseError.FileNotFound;
 				};
 				defer file.close();
@@ -399,7 +408,7 @@ pub fn import_flatten(mem: *const std.mem.Allocator, input_tokens: *Buffer(Token
 					return ParseError.FileNotFound;
 				};
 				const contents = file.readToEndAlloc(allocator, stat.size+1) catch {
-					std.debug.print("Error reading file: {s}\n", .{infile});
+					set_error(token_index-1, filename, "Error reading file: {s}\n", .{infile});
 					return ParseError.FileNotFound;
 				};
 				const opinion = tokenize(mem, contents);
@@ -476,7 +485,9 @@ const Token = struct {
 	text: []u8,
 	tag: TOKEN,
 	hoist_data: ?*Buffer(Token),
-	hoist_token: ?*Field
+	hoist_token: ?*Field,
+	line: u64,
+	source_index: u64,
 };
 
 const ProgramText = struct {
@@ -493,6 +504,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	token_map.put("pattern",.PATTERN) catch unreachable;
 	token_map.put("where",.WHERE) catch unreachable;
 	var tokens = Buffer(Token).init(mem.*);
+	var line: u64 = 1;
 	while (i<text.len){
 		var escape = false;
 		var c = text[i];
@@ -508,7 +520,10 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 			switch (c) {
 				' ' => {break :blk .SPACE;},
 				'\t' => {break :blk .TAB;},
-				'\n' => {break :blk .NEW_LINE;},
+				'\n' => {
+					line += 1;
+					break :blk .NEW_LINE;
+				},
 				'{' => {break :blk .OPEN_BRACE;},
 				'}' => {break :blk .CLOSE_BRACE;},
 				'[' => {break :blk .OPEN_BRACK;},
@@ -533,7 +548,14 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 			if (escape){
 				tag = .IDENTIFIER;
 			}
-			tokens.append(Token{.tag=tag, .text=text[i..i+1], .hoist_data=null, .hoist_token = null})
+			tokens.append(Token{
+				.tag=tag,
+				.text=text[i..i+1],
+				.hoist_data=null,
+				.hoist_token = null,
+				.line = line,
+				.source_index = i
+			})
 				catch unreachable;
 			i += 1;
 			continue;
@@ -554,7 +576,14 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				tag = .IDENTIFIER;
 			}
 		}
-		tokens.append(Token{.tag=tag, .text=keyword, .hoist_data=null, .hoist_token=null})
+		tokens.append(Token{
+			.tag=tag,
+			.text=keyword,
+			.hoist_data=null,
+			.hoist_token=null,
+			.line = line,
+			.source_index = i
+		})
 			catch unreachable;
 		i += size;
 	}
@@ -594,12 +623,12 @@ pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) P
 	token_map.put("r1", .R1) catch unreachable;
 	token_map.put("r2", .R2) catch unreachable;
 	token_map.put("r3", .R3) catch unreachable;
-	for (tokens.items) |*token| {
+	for (tokens.items, 0..) |*token, i| {
 		if (token_map.get(token.text)) |tag| {
 			token.tag = tag;
 		}
 		if (token.hoist_data) |_| {
-			std.debug.print("Left over hoist at {s} never found anchor\n", .{token.text});
+			set_error(i, token.*, "Left over hoist at {s} never found anchor\n", .{token.text});
 			return ParseError.NoHoist;
 		}
 	}
@@ -635,39 +664,12 @@ pub fn skip_whitespace(tokens: []Token, token_index: *u64) ParseError!void {
 		return;
 	}
 	token_index.*-=1;
-	std.debug.print("Encountered end of file in whitespace skip\n", .{});
+	set_error(token_index.*, tokens[tokens.len-1], "Encountered end of file in whitespace skip\n", .{});
 	return ParseError.UnexpectedEOF;
 }
 
-pub fn report_error(token_stream: *const Buffer(Token), token_index: u64) void{
-	var i = token_index;
-	while (i > 0){
-		if (token_stream.items[i].tag == .NEW_LINE){
-			i += 1;
-			break;
-		}
-		i = i - 1;
-	}
-	var k = i;
-	while (i < token_stream.items.len){
-		std.debug.print("{s}", .{token_stream.items[i].text});
-		if (token_stream.items[i].tag == .NEW_LINE){
-			break;
-		}
-		i = i + 1;
-	}
-	while (k < token_index){
-		k = k + 1;
-		const token = token_stream.items[k];
-		for (token.text) |c| {
-			if (c == '\t'){
-				std.debug.print("\t", .{});
-				continue;
-			}
-			std.debug.print(" ", .{});
-		}
-	}
-	std.debug.print(" ^\n", .{});
+pub fn report_error() void {
+
 }
 
 const PatternError = error {
@@ -690,7 +692,14 @@ pub fn to_byte_token_slice(mem: *const std.mem.Allocator, c: u8) []u8 {
 pub fn mk_token_from_u64(mem: *const std.mem.Allocator, val: u64) Token {
 	const buf = mem.alloc(u8, 20) catch unreachable;
 	const slice = std.fmt.bufPrint(buf, "{}", .{val}) catch unreachable;
-	return Token{.tag=.IDENTIFIER, .text=slice, .hoist_data=null, .hoist_token = null};
+	return Token{
+		.tag=.IDENTIFIER,
+		.text=slice,
+		.hoist_data=null,
+		.hoist_token = null,
+		.line = 0,
+		.source_index = 0
+	};
 }
 
 pub fn new_uid(mem: *const std.mem.Allocator) []u8 {
@@ -776,7 +785,7 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 			return output;
 		};
 		if (token_index.* > tokens.items.len){
-			std.debug.print("Expected opcode, found end of file\n", .{});
+			set_error(token_index.*-1, tokens.items[tokens.items.len-1],"Expected opcode, found end of file\n", .{});
 			return ParseError.UnexpectedEOF;
 		}
 		const token = tokens.items[token_index.*];
@@ -812,14 +821,14 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				const name = tokens.items[token_index.*];
 				token_index.* += 1;
 				if (name.tag != .IDENTIFIER){
-					std.debug.print("Expected name for transfer bind, found {s}\n", .{name.text});
+					set_error(token_index.*-1, name, "Expected name for transfer bind, found {s}\n", .{name.text});
 					return ParseError.UnexpectedToken;
 				}
 				skip_whitespace(tokens.items, token_index) catch {
 					return output;
 				};
 				if (tokens.items[token_index.*].tag != .EQUAL){
-					std.debug.print("Expected = for transfer bind, found {s}\n", .{tokens.items[token_index.*].text});
+					set_error(token_index.*, tokens.items[token_index.*], "Expected = for transfer bind, found {s}\n", .{tokens.items[token_index.*].text});
 					return ParseError.UnexpectedToken;
 				}
 				token_index.* += 1;
@@ -830,8 +839,7 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				comp_section = true;
 				const loc = try parse_location(mem, tokens, token_index);
 				comp_section = comp_stack;
-				const val = val64(loc) catch |err| {
-					std.debug.print("Encountered error in Persistence binding: {}\n", .{err});
+				const val = val64(loc) catch {
 					return ParseError.UnexpectedToken;
 				};
 				if (comp){
@@ -881,7 +889,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				continue :outer;
 			};
 			if (token_index.* > tokens.items.len){
-				std.debug.print("Expected opcode, found end of file\n", .{});
+				set_error(token_index.*-1, tokens.items[tokens.items.len-1], "Expected opcode, found end of file\n", .{});
 				return ParseError.UnexpectedEOF;
 			}
 			const token = tokens.items[token_index.*];
@@ -920,14 +928,15 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					const name = tokens.items[token_index.*];
 					token_index.* += 1;
 					if (name.tag != .IDENTIFIER){
-						std.debug.print("Expected name for transfer bind, found {s}\n", .{name.text});
+						set_error(token_index.*-1, name, "Expected name for transfer bind, found {s}\n", .{name.text});
 						return ParseError.UnexpectedToken;
 					}
 					skip_whitespace(tokens.items, token_index) catch {
 						continue :outer;
 					};
 					if (tokens.items[token_index.*].tag != .EQUAL){
-						std.debug.print("Expected = for transfer bind, found {s}\n", .{tokens.items[token_index.*].text});
+						set_error(token_index.*, tokens.items[token_index.*], "Expected = for transfer bind, found {s}\n", .{tokens.items[token_index.*].text});
+						error_index = token_index.*;
 						return ParseError.UnexpectedToken;
 					}
 					token_index.* += 1;
@@ -947,8 +956,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					comp_section = true;
 					const loc = try parse_location(mem, tokens, token_index);
 					comp_section = comp_stack;
-					const val = val64(loc) catch |err| {
-						std.debug.print("Encountered error in Persistence binding: {}\n", .{err});
+					const val = val64(loc) catch {
 						return ParseError.UnexpectedToken;
 					};
 					if (pass == 0){
@@ -1238,7 +1246,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					};
 				},
 				else => {
-					std.debug.print("Expected opcode, found {s}\n", .{token.text});
+					set_error(token_index.*, token, "Expected opcode, found {s}\n", .{token.text});
 					return ParseError.UnexpectedToken;
 				}
 			}
@@ -1313,7 +1321,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64, labels: std.StringHashMap(u64), deref: bool) ParseError!Location {
 	try skip_whitespace(tokens.items, token_index);
 	if (token_index.* > tokens.items.len){
-		std.debug.print("Expected operand for instruction, found end of file\n", .{});
+		set_error(token_index.*-1, tokens.items[tokens.items.len-1], "Expected operand for instruction, found end of file\n", .{});
 		return ParseError.UnexpectedEOF;
 	}
 	var token = tokens.items[token_index.*];
@@ -1329,7 +1337,7 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 				unreachable;
 			location.* = reference;
 			if (tokens.items[token_index.*].tag != .CLOSE_BRACK){
-				std.debug.print("Expected close bracket for dereferenced location\n", .{});
+				set_error(token_index.*, tokens.items[token_index.*], "Expected close bracket for dereferenced location\n", .{});
 				return ParseError.UnexpectedToken;
 			}
 			token_index.* += 1;
@@ -1360,7 +1368,7 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 				token_index.* += 1;
 			}
 			if (token.tag != .IDENTIFIER) {
-				std.debug.print("Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
+				set_error(token_index.*-1, token, "Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
 				return ParseError.UnexpectedToken;
 			}
 			return Location{
@@ -1368,7 +1376,7 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 			};
 		},
 		else => {
-			std.debug.print("Expected operand, found {s}\n", .{token.text});
+			set_error(token_index.*, token, "Expected operand, found {s}\n", .{token.text});
 			return ParseError.UnexpectedToken;
 		}
 	}
@@ -1377,7 +1385,7 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64) ParseError!Location {
 	try skip_whitespace(tokens.items, token_index);
 	if (token_index.* > tokens.items.len){
-		std.debug.print("Expected operand for instruction, found end of file\n", .{});
+		set_error(token_index.*-1, tokens.items[tokens.items.len-1], "Expected operand for instruction, found end of file\n", .{});
 		return ParseError.UnexpectedEOF;
 	}
 	var token = tokens.items[token_index.*];
@@ -1388,7 +1396,7 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 			unreachable;
 		location.* = reference;
 		if (tokens.items[token_index.*].tag != .CLOSE_BRACK){
-			std.debug.print("Expected close bracket for dereferenced location\n", .{});
+			set_error(token_index.*-1, tokens.items[token_index.*], "Expected close bracket for dereferenced location\n", .{});
 			return ParseError.UnexpectedToken;
 		}
 		token_index.* += 1;
@@ -1418,7 +1426,7 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 				token_index.* += 1;
 			}
 			if (token.tag != .IDENTIFIER) {
-				std.debug.print("Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
+				set_error(token_index.*-1, token, "Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
 				return ParseError.UnexpectedToken;
 			}
 			return Location{
@@ -1426,7 +1434,7 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 			};
 		},
 		else => {
-			std.debug.print("Expected operand, found {s}\n", .{token.text});
+			set_error(token_index.*, token, "Expected operand, found {s}\n", .{token.text});
 			return ParseError.UnexpectedToken;
 		}
 	}
@@ -5528,6 +5536,7 @@ pub fn pass_whitespace(state: *State, token_index: *u64) ParseError!void {
 		}
 		token_index.* += 1;
 	}
+	set_error(token_index.*, state.program.items[state.program.items.len-1], "Found EOF in whitespace parse\n", .{});
 	return ParseError.UnexpectedEOF;
 }
 
@@ -5588,6 +5597,7 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 	}
 	if (bind.name.items.len == 1){
 		if (bind.name.items[0] == .name){
+			set_error(token_index.*-1, state.program.items[token_index.*-1], "Found run bind\n", .{});
 			return ParseError.UnexpectedToken;
 		}
 	}
@@ -5763,7 +5773,7 @@ pub fn parse_constructor(mem: *const std.mem.Allocator, state: *State, token_ind
 	try pass_whitespace(state, token_index);
 	const name = state.program.items[token_index.*];
 	if (name.tag != .IDENTIFIER){
-		std.debug.print("Expected identifier for constructor name, found {s}\n", .{name.text});
+		set_error(token_index.*, name, "Expected identifier for constructor name, found {s}\n", .{name.text});
 		return ParseError.UnexpectedToken;
 	}
 	token_index.* += 1;
@@ -5799,7 +5809,7 @@ pub fn parse_pattern(mem: *const std.mem.Allocator, state: *State, token_index: 
 			continue;
 		}
 		else{
-			std.debug.print("Unexpected token between pattern constructors: {s}\n", .{token.text});
+			set_error(token_index.*, token, "Unexpected token between pattern constructors: {s}\n", .{token.text});
 			return ParseError.UnexpectedToken;
 		}
 	}
@@ -5813,14 +5823,14 @@ pub fn parse_pattern_def(mem: *const std.mem.Allocator, state: *State, token_ind
 	try pass_whitespace(state, token_index);
 	const name = state.program.items[token_index.*];
 	if (name.tag != .IDENTIFIER){
-		std.debug.print("Expected identifier for pattern definition name, found {s}\n", .{name.text});
+		set_error(token_index.*-1, name, "Expected identifier for pattern definition name, found {s}\n", .{name.text});
 		return ParseError.UnexpectedToken;
 	}
 	token_index.* += 1;
 	try pass_whitespace(state, token_index);
 	const eq = state.program.items[token_index.*];
 	if (eq.tag != .EQUAL){
-		std.debug.print("Expected = for pattern defintion set, found {s}\n", .{eq.text});
+		set_error(token_index.*, eq, "Expected = for pattern defintion set, found {s}\n", .{eq.text});
 		return ParseError.UnexpectedToken;
 	}
 	token_index.* += 1;
@@ -6029,7 +6039,7 @@ pub fn check_arg(state: *State, arg: *Arg) ParseError!void {
 				}
 			}
 			else{
-				std.debug.print("Unknown pattern constructor reference: {s}\n", .{arg.constructor.name.text});
+				set_error(0, null, "Unknown pattern constructor reference: {s}\n", .{arg.constructor.name.text});
 				return ParseError.UnexpectedToken;
 			}
 		},
@@ -6055,7 +6065,7 @@ pub fn check_field(state: *State, field: *Field) ParseError!void {
 			else{
 				if (state.patterns.get(field.constructor.text)) |_| {}
 				else{
-					std.debug.print("Unknown constructor reference in field: {s}\n", .{field.constructor.text});
+					set_error(0, null, "Unknown constructor reference in field: {s}\n", .{field.constructor.text});
 					return ParseError.UnexpectedToken;
 				}
 			}
@@ -6226,7 +6236,7 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 		.constructor => {
 			if (state.constructors.get(arg.constructor.name.text)) |cons| {
 				if (cons.fields.items.len != arg.constructor.args.items.len){
-					std.debug.print("Expected {} args for {s} argument, found {}\n", .{cons.fields.items.len, arg.constructor.name.text, arg.constructor.args.items.len});
+					set_error(0, null, "Expected {} args for {s} argument, found {}\n", .{cons.fields.items.len, arg.constructor.name.text, arg.constructor.args.items.len});
 					return ParseError.UnexpectedToken;
 				}
 				for (arg.constructor.args.items, cons.fields.items) |*real, expected| {
@@ -6254,17 +6264,28 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 				switch (exp){
 					.literal => {
 						if (arg.literal.items.len != exp.literal.items.len){
-							std.debug.print("Field literal and arg literal differ in length\n", .{});
+							if (exp.literal.items.len == 0){
+								set_error(0, null, "Field literal and arg literal differ in length\n", .{});
+							}
+							else{
+								set_error(0, exp.literal.items[0], "Field literal and arg literal differ in length\n", .{});
+							}
 							return ParseError.UnexpectedToken;
 						}
 						for (arg.literal.items, exp.literal.items) |*a, *e| {
 							if (!token_equal(a, e)){
+								set_error(0, null, "Argument literal did not match expected field\n", .{});
 								return ParseError.UnexpectedToken;
 							}
 						}
 					},
 					else => {
-						std.debug.print("Field not matched by literal\n", .{});
+						if (exp.literal.items.len == 0){
+							set_error(0, null, "Field not matched by literal\n", .{});
+						}
+						else{
+							set_error(0, exp.literal.items[0], "Field not matched by literal\n", .{});
+						}
 						return ParseError.UnexpectedToken;
 					}
 				}
@@ -6274,6 +6295,7 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 				var copy = tok;
 				if (!token_equal(&copy, &token)) {
 					if (!whitespace_works_out(&copy, &token)){
+						set_error(token_index.*, token, "Argument literal did not match\n", .{});
 						return ParseError.UnexpectedToken;
 					}
 				}
@@ -6301,7 +6323,14 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 		},
 		.unique => {
 			var instance = Application.init(mem.*);
-			instance.append(Token{.tag=.IDENTIFIER, .text=new_uid(mem), .hoist_data=null, .hoist_token = null})
+			instance.append(Token{
+				.tag=.IDENTIFIER,
+				.text=new_uid(mem),
+				.hoist_data=null,
+				.hoist_token = null,
+				.line = 0,
+				.source_index = 0
+			})
 				catch unreachable;
 			applications.put(arg.unique.text, instance)
 				catch unreachable;
@@ -6336,6 +6365,7 @@ pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer
 					break;
 				}
 				if (found == false){
+					set_error(token_index.*, tokens.items[token_index.*], "Unable to find matching constructor for {s}\n", .{field.constructor.text});
 					return ParseError.UnexpectedToken;
 				}
 			}
@@ -6343,12 +6373,14 @@ pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer
 		.literal => {
 			for (field.literal.items) |tok| {
 				if (token_index.* >= tokens.items.len){
-					return ParseError.UnexpectedToken;
+					set_error(token_index.*, tokens.items[tokens.items.len-1], "Unexpected EOF in literal parse\n", .{});
+					return ParseError.UnexpectedEOF;
 				}
 				var token = tokens.items[token_index.*];
 				var copy = tok;
 				if (!token_equal(&copy, &token)){
 					if (!whitespace_works_out(&copy, &token)){
+						set_error(token_index.*, token, "Literal did not match field expectation\n", .{});
 						return ParseError.UnexpectedToken;
 					}
 				}
@@ -6364,6 +6396,7 @@ pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer
 				}
 				return;
 			}
+			set_error(token_index.*, tokens.items[token_index.*], "Field pattern did not match\n", .{});
 			return ParseError.UnexpectedToken;
 		}
 	}
@@ -6374,9 +6407,11 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 	switch (field.*){
 		.identifier => {
 			if (args.items.len > 1){
+				set_error(0, null, "Expected single argument for identifier field\n", .{});
 				return ParseError.UnexpectedToken;
 			}
 			if (args.items[0] != .name){
+				set_error(0, null, "Expected name argument for identifier field\n", .{});
 				return ParseError.UnexpectedToken;
 			}
 			const token = tokens.items[token_index.*];
@@ -6391,6 +6426,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 		.constructor => {
 			if (state.constructors.get(field.constructor.text)) |cons| {
 				if (cons.fields.items.len != args.items.len){
+					set_error(0, null, "Constructor for {s} did not match argument field count\n", .{field.constructor.text});
 					return ParseError.UnexpectedToken;
 				}
 				for (cons.fields.items, args.items) |inner, *arg| {
@@ -6409,6 +6445,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 				outer: for (def.constructors.items) |cons| {
 					token_index.* = save_index;
 					if (cons.fields.items.len != args.items.len){
+						set_error(token_index.*, tokens.items[token_index.*], "Expected constructor fields did not match argument fields in length\n", .{});
 						return ParseError.UnexpectedToken;
 					}
 					for (cons.fields.items, args.items) |inner, *arg| {
@@ -6425,6 +6462,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 					break;
 				}
 				if (found == false){
+					set_error(token_index.*, tokens.items[token_index.*], "Unable to find matching constructor or pattern for {s}\n", .{field.constructor.text});
 					return ParseError.UnexpectedToken;
 				}
 				return applications;
@@ -6433,9 +6471,11 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 		},
 		.literal => {
 			if (args.items.len > 1){
+				set_error(0, null, "Expected single argument for literal field match\n", .{});
 				return ParseError.UnexpectedToken;
 			}
 			if (args.items[0] != .name){
+				set_error(0, null, "Expected name argument to match literal field\n", .{});
 				return ParseError.UnexpectedToken;
 			}
 			const save = token_index.*;
@@ -6444,6 +6484,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 				var copy = tok;
 				if (!token_equal(&copy, &token)){
 					if (!whitespace_works_out(&copy, &token)){
+						set_error(token_index.*, token, "Unexpected token in field literal\n", .{});
 						return ParseError.UnexpectedToken;
 					}
 				}
@@ -6470,6 +6511,7 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 				}
 				return applications;
 			}
+			set_error(token_index.*, tokens.items[token_index.*], "Pattern field did not apply\n", .{});
 			return ParseError.UnexpectedToken;
 		}
 	}
@@ -6505,7 +6547,14 @@ pub fn concat_pass(mem: *const std.mem.Allocator, state: *State) bool {
 				together[i] = right.text[i-token.text.len];
 				i += 1;
 			}
-			new.append(Token{.tag=.IDENTIFIER, .text=together, .hoist_data=token.hoist_data, .hoist_token=token.hoist_token})
+			new.append(Token{
+				.tag=.IDENTIFIER,
+				.text=together,
+				.hoist_data=token.hoist_data,
+				.hoist_token=token.hoist_token,
+				.line = token.line,
+				.source_index = token.source_index
+			})
 				catch unreachable;
 			continue;
 		}
@@ -6565,9 +6614,17 @@ pub fn expand_hoists(mem: *const std.mem.Allocator, state: *State) ParseError!Bu
 	return new;
 }
 
+pub fn set_error(index: u64, token: ?Token, comptime fmt: []const u8, args: anytype) void {
+    const result = std.fmt.bufPrint(&error_buffer, fmt, args) catch unreachable;
+    error_buffer_len = result.len;
+	error_index = index;
+	error_token = token;
+}
+
 //TODO think about debugging infrastructure
 //TODO introduce propper debugger state
 	//breakpoints
 	//stepthrough
 	//backtrack
+	//inspect memory address
 //TODO memory optimization with aux buffers
