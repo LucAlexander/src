@@ -6353,7 +6353,10 @@ pub fn apply_arg(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer(T
 					}
 				}
 			}
-			try skip_whitespace(tokens.items, token_index);
+			const first = arg.literal.items[0];
+			if (first.tag != .WHITESPACE and first.tag != .LINE_END){
+				try skip_whitespace(tokens.items, token_index);
+			}
 			for (arg.literal.items) |tok| {
 				var token = tokens.items[token_index.*];
 				var copy = tok;
@@ -6436,7 +6439,10 @@ pub fn apply_field(mem: *const std.mem.Allocator, state: *State, tokens: *Buffer
 			}
 		},
 		.literal => {
-			try skip_whitespace(tokens.items, token_index);
+			const first = field.literal.items[0];
+			if (first.tag != .WHITESPACE and first.tag != .LINE_END){
+				try skip_whitespace(tokens.items, token_index);
+			}
 			for (field.literal.items) |tok| {
 				if (token_index.* >= tokens.items.len){
 					set_error(token_index.*, tokens.items[tokens.items.len-1], "Unexpected EOF in literal parse\n", .{});
@@ -6545,7 +6551,10 @@ pub fn apply_field_binding(mem: *const std.mem.Allocator, state: *State, tokens:
 				set_error(0, null, "Expected name argument to match literal field\n", .{});
 				return ParseError.UnexpectedToken;
 			}
-			try skip_whitespace(tokens.items, token_index);
+			const first = field.literal.items[0];
+			if (first.tag != .WHITESPACE and first.tag != .LINE_END){
+				try skip_whitespace(tokens.items, token_index);
+			}
 			const save = token_index.*;
 			for (field.literal.items) |tok| {
 				var token = tokens.items[token_index.*];
@@ -6695,4 +6704,3 @@ pub fn set_error(index: u64, token: ?Token, comptime fmt: []const u8, args: anyt
 	//backtrack
 	//inspect memory address
 //TODO memory optimization with aux buffers
-//TODO whitespace starting literals dont work
