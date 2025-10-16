@@ -330,14 +330,14 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 	};
 	state = parse(mem, &state) catch |err| {
 		std.debug.print("Parse / apply error: {}\n", .{err});
-		report_error();
+		report_error(token_stream.*, null);
 		return null;
 	};
 	var index:u64 = 0;
 	if (headless) |filename| {
 		const stream = parse_plugin(mem, &state.program, &index, false) catch |err| {
 			std.debug.print("Headless Plugin Parse Error: {} \n", .{err});
-			report_error();
+			report_error(token_stream.*, null);
 			return null;
 		};
 		var out = std.fs.cwd().createFile(filename, .{.truncate=true}) catch {
@@ -360,7 +360,7 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 	var runtime = VM.init();
 	const program_len = parse_bytecode(mem, runtime.mem[start_ip..], &state.program, &index, false) catch |err| {
 		std.debug.print("Bytecode Parse Error {}\n", .{err});
-		report_error();
+		report_error(token_stream.*, null);
 		return null;
 	};
 	vm = runtime;
@@ -668,8 +668,23 @@ pub fn skip_whitespace(tokens: []Token, token_index: *u64) ParseError!void {
 	return ParseError.UnexpectedEOF;
 }
 
-pub fn report_error() void {
-
+pub fn report_error(original: Buffer(Token), current: ?Buffer(Token)) void {
+	var token_index: u64 = 0;
+	if (current) |expansion|{
+		std.debug.print("In expansion: \n", .{});
+		while (token_index < expansion.items.len){
+			const token = expansion.items[token_index];
+			token_index += 1;
+			std.debug.print("{s}", .{token.text});
+		}
+	}
+	std.debug.print("In source: \n", .{});
+	token_index = 0;
+	while (token_index < original.items.len){
+		const token = original.items[token_index];
+		token_index += 1;
+		std.debug.print("{s}", .{token.text});
+	}
 }
 
 const PatternError = error {
