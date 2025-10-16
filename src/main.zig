@@ -5612,25 +5612,18 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 		}
 		if (token.tag == .SEMI) {
 			token_index.* += 1;
-			try pass_whitespace(state, token_index);
-			const where = state.program.items[token_index.*];
-			if (where.tag == .WHERE){
-				token_index.* += 1;
+			return bind;
+		}
+		if (token.tag == .WHERE){
+			token_index.* += 1;
+			while (token_index.* < state.program.items.len){
 				try pass_whitespace(state, token_index);
-				const open = state.program.items[token_index.*];
-				if (open.tag != .OPEN_BRACE){
-					std.debug.print("Expected brace to open where clause, found {s}\n", .{open.text});
+				const next = state.program.items[token_index.*];
+				if (next.tag == .SEMI){
+					break;
 				}
-				token_index.* += 1;
-				while (token_index.* < state.program.items.len){
-					try pass_whitespace(state, token_index);
-					const next = state.program.items[token_index.*];
-					if (next.tag == .CLOSE_BRACE){
-						break;
-					}
-					bind.where.append(try parse_bind(mem, state, token_index))
-						catch unreachable;
-				}
+				bind.where.append(try parse_bind(mem, state, token_index))
+					catch unreachable;
 			}
 			return bind;
 		}
