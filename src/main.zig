@@ -5688,8 +5688,12 @@ pub fn parse_bind(mem: *const std.mem.Allocator, state: *State, token_index: *u6
 					token_index.* += 1;
 					break;
 				}
-				bind.where.append(try parse_bind(mem, state, token_index))
-					catch unreachable;
+				if (next.tag == .BIND){
+					bind.where.append(try parse_bind(mem, state, token_index))
+						catch unreachable;
+					continue;
+				}
+				token_index.* += 1;
 			}
 			return bind;
 		}
@@ -6704,3 +6708,4 @@ pub fn set_error(index: u64, token: ?Token, comptime fmt: []const u8, args: anyt
 	//backtrack
 	//inspect memory address
 //TODO memory optimization with aux buffers
+//TODO parametrics?
