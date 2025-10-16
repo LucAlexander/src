@@ -330,14 +330,14 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 	};
 	state = parse(mem, &state) catch |err| {
 		std.debug.print("Parse / apply error: {}\n", .{err});
-		report_error(token_stream.*, null);
+		report_error(token_stream.*, state.program);
 		return null;
 	};
 	var index:u64 = 0;
 	if (headless) |filename| {
 		const stream = parse_plugin(mem, &state.program, &index, false) catch |err| {
 			std.debug.print("Headless Plugin Parse Error: {} \n", .{err});
-			report_error(token_stream.*, null);
+			report_error(token_stream.*, state.program);
 			return null;
 		};
 		var out = std.fs.cwd().createFile(filename, .{.truncate=true}) catch {
@@ -360,7 +360,7 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 	var runtime = VM.init();
 	const program_len = parse_bytecode(mem, runtime.mem[start_ip..], &state.program, &index, false) catch |err| {
 		std.debug.print("Bytecode Parse Error {}\n", .{err});
-		report_error(token_stream.*, null);
+		report_error(token_stream.*, state.program);
 		return null;
 	};
 	vm = runtime;
@@ -554,7 +554,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 				.hoist_data=null,
 				.hoist_token = null,
 				.line = line,
-				.source_index = i
+				.source_index = tokens.items.len
 			})
 				catch unreachable;
 			i += 1;
@@ -582,7 +582,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 			.hoist_data=null,
 			.hoist_token=null,
 			.line = line,
-			.source_index = i
+			.source_index = tokens.items.len
 		})
 			catch unreachable;
 		i += size;
@@ -669,22 +669,58 @@ pub fn skip_whitespace(tokens: []Token, token_index: *u64) ParseError!void {
 }
 
 pub fn report_error(original: Buffer(Token), current: ?Buffer(Token)) void {
-	var token_index: u64 = 0;
-	if (current) |expansion|{
-		std.debug.print("In expansion: \n", .{});
-		while (token_index < expansion.items.len){
-			const token = expansion.items[token_index];
+	const stderr = std.io.getStdErr().writer();
+	stderr.print("{s}\n", .{error_buffer[0..error_buffer_len]}) catch unreachable;
+	var line:u64 = 1;
+	if (error_token) |tok| {
+		var token_index: u64 = 0;
+		if (current) |expansion|{
+			std.debug.print("In expansion: \n", .{});
+			while (token_index < expansion.items.len){
+				const token = expansion.items[token_index];
+				token_index += 1;
+				if (token_index-1 > error_index - 8 and token_index-1 < error_index + 8){
+					if (token_index-1 == error_index){
+						stderr.print("\x1b[4m{s}\x1b[0m", .{token.text}) catch unreachable;
+					}
+					else{
+						stderr.print("{s}", .{token.text}) catch unreachable;
+					}
+				}
+				if (token_index > error_index - 8 and token_index < error_index + 8){
+					if (token.tag == .NEW_LINE){
+						line += 1;
+						stderr.print("{d:06} | ", .{line}) catch unreachable;
+					}
+				}
+			}
+		}
+		if (tok.line == 0 or tok.source_index == 0){
+			return;
+		}
+		stderr.print("\n\nIn source: \n", .{}) catch unreachable;
+		token_index = 0;
+		line = 1;
+		while (token_index < original.items.len){
+			const token = original.items[token_index];
 			token_index += 1;
-			std.debug.print("{s}", .{token.text});
+			if (line > tok.line-2 and line < tok.line + 2){
+				if (token_index-1 == tok.source_index){
+					stderr.print("\x1b[4m{s}\x1b[0m", .{token.text}) catch unreachable;
+				}
+				else{
+					stderr.print("{s}", .{token.text}) catch unreachable;
+				}
+			}
+			if (token.tag == .NEW_LINE){
+				line += 1;
+				if (line > tok.line-2 and line < tok.line + 2){
+					stderr.print("{d:06} | ", .{line}) catch unreachable;
+				}
+			}
 		}
 	}
-	std.debug.print("In source: \n", .{});
-	token_index = 0;
-	while (token_index < original.items.len){
-		const token = original.items[token_index];
-		token_index += 1;
-		std.debug.print("{s}", .{token.text});
-	}
+	stderr.print("\n", .{}) catch unreachable;
 }
 
 const PatternError = error {
