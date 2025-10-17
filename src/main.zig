@@ -1280,9 +1280,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					store_u32(data, i, @intFromEnum(inst.tag));
 					i += 4;
 					write_location(data, &i, dest);
-					const bytes: [8]u8 = @bitCast(src.literal);
-					@memcpy(data[i..i+8], &bytes);
-					i += 8;
+					write_location_64(data, &i, src);
 				},
 				.alu => {
 					const dest = reduce_location(&inst.data.alu.dest);
@@ -1296,7 +1294,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				.compare => {
 					const left = reduce_location(&inst.data.compare.left);
 					const right = reduce_location(&inst.data.compare.right);
-					reduce_binary_operator(@intFromEnum(inst.tag), data, &i, left, right);
+					reduce_binary_operator_extended(@intFromEnum(inst.tag), data, &i, left, right);
 					store_u32(data, i, 0);
 					i += 4;
 					write_location(data, &i, left);
@@ -4853,6 +4851,7 @@ pub fn com_il_bytes(ip: *align(1) u64) bool{
 }
 
 pub fn cmp_ii_bytes(ip: *align(1) u64) bool {
+	std.debug.print("cmp_ii_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -4872,6 +4871,7 @@ pub fn cmp_ii_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_il_bytes(ip: *align(1) u64) bool {
+	std.debug.print("cmp_il_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const right = args >> 32;
@@ -4890,6 +4890,7 @@ pub fn cmp_il_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_id_bytes(ip: *align(1) u64) bool {
+	std.debug.print("cmp_id_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left = vm.words[left_name >> 3];
@@ -4910,6 +4911,7 @@ pub fn cmp_id_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_li_bytes(ip: *align(1) u64) bool {
+	std.debug.print("cmp_li_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -4928,6 +4930,7 @@ pub fn cmp_li_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_ll_bytes(ip: *align(1) u64) bool {
+	std.debug.print("cmp_ll_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right = args >> 32;
@@ -4945,6 +4948,7 @@ pub fn cmp_ll_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_ld_bytes(ip: *align(1) u64) bool {
+	std.debug.print("cmp_ld_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -4964,6 +4968,7 @@ pub fn cmp_ld_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_di_bytes(ip: *align(1) u64) bool {
+	std.debug.print("cmp_di_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left_imm = vm.words[left_name >> 3];
@@ -4984,6 +4989,7 @@ pub fn cmp_di_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_dl_bytes(ip: *align(1) u64) bool {
+	std.debug.print("cmp_dl_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left_imm = vm.words[left_name >> 3];
@@ -5003,6 +5009,7 @@ pub fn cmp_dl_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_dd_bytes(ip: *align(1) u64) bool {
+	std.debug.print("cmp_dd_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left_imm = vm.words[left_name >> 3];
@@ -5444,6 +5451,51 @@ pub fn reduce_binary_suboperator(seed: u8, data: []u8, i:*u64, a: Location, b:Lo
 	}
 }
 
+pub fn reduce_binary_operator_extended(seed: u8, data: []u8, i: *u64, a: Location, b: Location) void {
+	if (a == .immediate){
+		if (b == .immediate){
+			store_u32(data, i.*, seed);
+			i.* += 4;
+		}
+		else if (b == .literal){
+			store_u32(data, i.*, seed+1);
+			i.* += 4;
+		}
+		else if (b == .dereference){
+			store_u32(data, i.*, seed+2);
+			i.* += 4;
+		}
+	}
+	else if (a == .literal){
+		if (b == .immediate){
+			store_u32(data, i.*, seed+3);
+			i.* += 4;
+		}
+		else if (b == .literal){
+			store_u32(data, i.*, seed+4);
+			i.* += 4;
+		}
+		else if (b == .dereference){
+			store_u32(data, i.*, seed+5);
+			i.* += 4;
+		}
+	}
+	else if (a == .dereference){
+		if (b == .immediate){
+			store_u32(data, i.*, seed+6);
+			i.* += 4;
+		}
+		else if (b == .literal){
+			store_u32(data, i.*, seed+7);
+			i.* += 4;
+		}
+		else if (b == .dereference){
+			store_u32(data, i.*, seed+8);
+			i.* += 4;
+		}
+	}
+}
+
 pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location) void {
 	if (a == .immediate or a == .literal){
 		if (b == .immediate){
@@ -5471,6 +5523,27 @@ pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Loc
 		else if (b == .dereference){
 			store_u32(data, i.*, seed+5);
 			i.* += 4;
+		}
+	}
+}
+
+pub fn write_location_64(data: []u8, i: *u64, src: Location) void {
+	switch (src){
+		.immediate => {
+			const bytes: [8]u8 = @bitCast(src.immediate);
+			@memcpy(data[i.*..i.*+8], &bytes);
+			i.* += 8;
+		},
+		.literal => {
+			const bytes: [8]u8 = @bitCast(src.literal);
+			@memcpy(data[i.*..i.*+8], &bytes);
+			i.* += 8;
+		},
+		.dereference => {
+			write_location_64(data, i, src.dereference.*);
+		},
+		.register => {
+			unreachable;
 		}
 	}
 }
@@ -5629,3 +5702,4 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	//backtrack
 	//inspect memory address
 //TODO rotating buffers
+//TODO visual code show in debug view
