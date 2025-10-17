@@ -2,8 +2,8 @@ const std = @import("std");
 const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
-const debug = true;
-const debug_comp = true;
+var debug:bool = false;
+var debug_comp:bool = false;
 
 var error_index:u64 = 0;
 var error_buffer: [512]u8 = undefined;
@@ -75,48 +75,72 @@ pub fn main() !void {
 	std.debug.assert(total_mem_size % 8 == 0);
 	const allocator = std.heap.page_allocator;
 	const args = try std.process.argsAlloc(allocator);
-	switch (args.len){
-		2 => {
-			const filename = args[1];
-			if (std.mem.eql(u8, filename, "-h")){
-				std.debug.print("Help Menu\n", .{});
-				std.debug.print("    src -h                    : show this message\n", .{});
-				std.debug.print("    src infile.src            : compile and run src program\n", .{});
-				std.debug.print("    src infile.src -o out.bin : compile src program to binary\n", .{});
-				std.debug.print("    src infile.src -p out.out : compile src program as a plugin\n", .{});
-				std.debug.print("    src -i infile.bin         : run compiled src program\n", .{});
-				return;
-			}
-			compile_and_run(filename);
-		},
-		3 => {
-			const i = args[1];
-			if (!std.mem.eql(u8, i, "-i")){
-				std.debug.print("Expected arg 1 as -i for specifying input binary file, found {s}\n", .{i});
-			}
-			const filename = args[2];
-			run_file(filename);
-		},
-		4 => {
-			const infile = args[1];
-			const option = args[2];
-			const outfile = args[3];
-			if (std.mem.eql(u8, option, "-p")){
-				compile_and_write(infile, outfile, true);
-				return;
-			}
-			if (!std.mem.eql(u8, option, "-o")){
-				std.debug.print("Expected arg 2 as -o for specifying output binary file, found {s}\n", .{option});
-				return;
-			}
-			compile_and_write(infile, outfile, false);
-		},
-		1 => {
-			std.debug.print("Provide args, provide -h for help\n", .{});
-		},
-		else => {
-			std.debug.print("Incorrect number of args, provide -h for help\n", .{});
+	if (std.mem.eql(u8, args[1], "-h")){
+		std.debug.print("Help Menu\n", .{});
+		std.debug.print("    -h             :  show this message\n", .{});
+		std.debug.print("    -g             :  activate runtime debug mode\n", .{});
+		std.debug.print("    -gc            :  activate comptime debug mode\n", .{});
+		std.debug.print("    -c             :  Prevent running the program\n", .{});
+		std.debug.print("    [filename]     :  compile and run src program\n", .{});
+		std.debug.print("    -o [filename]  :  compile src program to binary\n", .{});
+		std.debug.print("    -p [filename]  :  compile src program as a plugin\n", .{});
+		std.debug.print("    -i [filename]  :  run compiled src program\n", .{});
+		return;
+	}
+	var arg_index:u64 = 0;
+	var filename: ?[]u8 = null;
+	var input_filename: ?[]u8 = null;
+	var output_filename: ?[]u8 = null;
+	var expansion_filename: ?[]u8 = null;
+	var run = true;
+	while (arg_index < args.len){
+		const arg = args[arg_index];
+		arg_index += 1;
+		if (std.mem.eql(u8, arg, "-g")){
+			debug = true;
+			continue;
 		}
+		if (std.mem.eql(u8, arg, "-gc")){
+			debug_comp = true;
+			continue;
+		}
+		if (std.mem.eql(u8, arg, "-i")){
+			if (arg_index == args.len){
+				std.debug.print("Expected filename for input\n", .{});
+				return;
+			}
+			input_filename = args[arg_index];
+			arg_index += 1;
+			continue;
+		}
+		if (std.mem.eql(u8, arg, "-o")){
+			if (arg_index == args.len){
+				std.debug.print("Expected filename for output\n", .{});
+				return;
+			}
+			output_filename = args[arg_index];
+			arg_index += 1;
+			continue;
+		}
+		if (std.mem.eql(u8, arg, "-p")){
+			if (arg_index == args.len){
+				std.debug.print("Expected filename for expansion output\n", .{});
+				return;
+			}
+			expansion_filename = args[arg_index];
+			arg_index += 1;
+			continue;
+		}
+		if (std.mem.eql(u8, arg, "-c")){
+			run = false;
+		}
+		filename = arg;
+	}
+	if (filename) |name| {
+		compile(name, output_filename, expansion_filename, run);
+	}
+	else{
+		std.debug.print("Provide head filename\n", .{});
 	}
 }
 
@@ -200,7 +224,7 @@ pub fn push_builtin_constants() void {
 
 }
 
-pub fn compile_and_run(filename: []u8) void {
+pub fn compile(filename: []u8, output_filename: ?[]u8, expand_filename: ?[]u8, run: bool) void {
 	const allocator = std.heap.page_allocator;
 	var infile = std.fs.cwd().openFile(filename, .{}) catch {
 		std.debug.print("File not found: {s}\n", .{filename});
@@ -229,53 +253,22 @@ pub fn compile_and_run(filename: []u8) void {
 		std.debug.print("Error creating texture\n", .{});
 		return;
 	};
-	_ = metaprogram(&tokens, &mem, true, null);
-}
-
-pub fn compile_and_write(infilename: []u8, outfilename: []u8, plugin: bool) void {
-	const allocator = std.heap.page_allocator;
-	var infile = std.fs.cwd().openFile(infilename, .{}) catch {
-		std.debug.print("File not found: {s}\n", .{infilename});
-		return;
-	};
-	defer infile.close();
-	const stat = infile.stat() catch {
-		std.debug.print("Errored file stat: {s}\n", .{infilename});
-		return;
-	};
-	const contents = infile.readToEndAlloc(allocator, stat.size+1) catch {
-		std.debug.print("Error reading file: {s}\n", .{infilename});
-		return;
-	};
-	defer allocator.free(contents);
-	var main_mem = std.heap.ArenaAllocator.init(allocator);
-	defer main_mem.deinit();
-	const mem = main_mem.allocator();
-	var tokens = tokenize(&mem, contents);
-	show_tokens(tokens);
-	if (debug){
-		std.debug.print("initial------------------------------\n", .{});
-	}
-	rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
-	frame_buffer_texture = rl.loadTextureFromImage(frame_buffer_image) catch {
-		std.debug.print("Error creating texture\n", .{});
-		return;
-	};
-	if (plugin){
+	if (expand_filename) |outfilename| {
 		_ = metaprogram(&tokens, &mem, false, outfilename);
-		return;
 	}
-	const program_len = metaprogram(&tokens, &mem, false, null);
+	const program_len = metaprogram(&tokens, &mem, run, null);
 	if (program_len) |len| {
-		var outfile = std.fs.cwd().createFile(outfilename, .{.truncate=true}) catch {
-			std.debug.print("Error creating file: {s}\n", .{outfilename});
-			return;
-		};
-		defer outfile.close();
-		outfile.writeAll(vm.mem[start_ip..start_ip+len]) catch {
-			std.debug.print("Error writing to file: {s}\n", .{outfilename});
-			return;
-		};
+		if (output_filename) |outfilename|{
+			var outfile = std.fs.cwd().createFile(outfilename, .{.truncate=true}) catch {
+				std.debug.print("Error creating file: {s}\n", .{outfilename});
+				return;
+			};
+			defer outfile.close();
+			outfile.writeAll(vm.mem[start_ip..start_ip+len]) catch {
+				std.debug.print("Error writing to file: {s}\n", .{outfilename});
+				return;
+			};
+		}
 	}
 }
 
@@ -312,10 +305,6 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 	var main_txt = std.heap.ArenaAllocator.init(allocator);
 	defer main_aux.deinit();
 	defer main_txt.deinit();
-	//const txt = main_txt.allocator();
-	//const aux = main_aux.allocator();
-	//var text = Buffer(Token).init(txt);
-	//var auxil = Buffer(Token).init(aux);
 	const token_stream = import_flatten(mem, tokens) catch |err| {
 		std.debug.print("Error flattening imports: {}\n", .{err});
 		return null;
@@ -4850,7 +4839,6 @@ pub fn com_il_bytes(ip: *align(1) u64) bool{
 }
 
 pub fn cmp_ii_bytes(ip: *align(1) u64) bool {
-	std.debug.print("cmp_ii_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -4870,7 +4858,6 @@ pub fn cmp_ii_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_il_bytes(ip: *align(1) u64) bool {
-	std.debug.print("cmp_il_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const right = args >> 32;
@@ -4889,7 +4876,6 @@ pub fn cmp_il_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_id_bytes(ip: *align(1) u64) bool {
-	std.debug.print("cmp_id_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left = vm.words[left_name >> 3];
@@ -4910,7 +4896,6 @@ pub fn cmp_id_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_li_bytes(ip: *align(1) u64) bool {
-	std.debug.print("cmp_li_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -4929,7 +4914,6 @@ pub fn cmp_li_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_ll_bytes(ip: *align(1) u64) bool {
-	std.debug.print("cmp_ll_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right = args >> 32;
@@ -4947,7 +4931,6 @@ pub fn cmp_ll_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_ld_bytes(ip: *align(1) u64) bool {
-	std.debug.print("cmp_ld_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left = (args & 0xFFFFFFFF);
 	const right_name = args >> 32;
@@ -4967,7 +4950,6 @@ pub fn cmp_ld_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_di_bytes(ip: *align(1) u64) bool {
-	std.debug.print("cmp_di_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left_imm = vm.words[left_name >> 3];
@@ -4988,7 +4970,6 @@ pub fn cmp_di_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_dl_bytes(ip: *align(1) u64) bool {
-	std.debug.print("cmp_dl_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left_imm = vm.words[left_name >> 3];
@@ -5008,7 +4989,6 @@ pub fn cmp_dl_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn cmp_dd_bytes(ip: *align(1) u64) bool {
-	std.debug.print("cmp_dd_bytes\n", .{});
 	const args = vm.words[ip.*+1];
 	const left_name = (args & 0xFFFFFFFF);
 	const left_imm = vm.words[left_name >> 3];
