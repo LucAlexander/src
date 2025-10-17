@@ -2,30 +2,45 @@
 
 Check the included src files in the repository for examples, these docs are minimal and will improve as the spec solidifies.
 
-## Binds
+## Passes
 
-The bind system is a functional programming language layered on top of the bytecode, it handles the syntactic half of the metaprogramming.
+Passes handle the syntactic side of metaprogramming. They operate on the program file memory itself inside a vm. r0 is given the address of the source program, r1 is the address of the start of the output program, which replaces your program when the pass runs. 
+
+```
+pass
+mov 0 r1
+bind continue ip
+	mov r2 r0
+	movw r3 !/
+	cmp [r0] r3
+	jne append
+	add r0 r0 !8
+	cmp [r0] r3
+	jne append
+	bind inner ip
+		add r0 r0 !8
+		movw r3 !\
+		cmp [r0] r3
+		jne inner 
+		add r0 r0 !8
+		jmp continue 
+	bind append ip
+	mov r0 r2
+	mov [r1] [r0]
+	add r1 r1 !8
+	add r0 r0 !8
+	cmp r0 0
+	jlt continue
+bind break ip
+mov r0 !1
+int	
+end
 
 ```
 
-pattern Comment = Comment '//' Anything_EOL;
-pattern Anything_EOL = EOL '$' | Anything * Anything_EOL;
+## Comptime
 
-bind (Comment '//' anything) = ;
-
-
-```
-
-binds can be recursive and have where clauses containing local binds. They are preparsed but are applied sequentially. 
-
-passing an argument in the form of `@name` to a bind creates a non argument that acts as a unique identifier that can be used during that bind.
-
-## Bytecode
-The bytecode language designed for src is optional, and the tool can be used headless as a plugin system for any other language, with comptime and run binds included.
-
-### Comptime
-
-Comptime handles the semantic side of metaprogramming.
+Comptime handles the semantic side of metaprogramming. It gives you a compile time vm to store persistent data accross comptime blocks.
 ```
 comp
     anything here runs at comptile time
@@ -34,7 +49,7 @@ comp
 run
 ```
 
-### Run Binds
+## Binds
 ```
 comp
     mov r1 !FF
@@ -46,7 +61,7 @@ bind 0 hi_byte = r1
 ```
 binds `hi_byte` to the constant stored in r1 on the comptime vm: `FF`.
 
-### ISA
+## ISA
 
 ```
 Builtin Regsiters = r0 | r1 | r2 | r3 | ip
@@ -81,7 +96,7 @@ address = (hex integer)
 literal = !(hex integer)
 ```
 
-### Interrupts
+## Interrupts
 
 ```
 r0: 0
@@ -120,7 +135,7 @@ r2: in length of program
 r3 <- address to write compiled program
 ```
 
-### Builtin Symbols
+## Builtin Symbols
 ```
 mtp: memory top
 mbm: memory bottom (frame buffer_size)
