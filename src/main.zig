@@ -5579,7 +5579,9 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	pass_vm.half_words = std.mem.bytesAsSlice(u32, pass_vm.mem[0..]);
 	var token_index:u64 = 0;
 	var new = Buffer(Token).init(mem.*);
-	var tokens = input;
+	var tokens = Buffer(Token).init(mem.*);
+	tokens.appendSlice(input.items)
+		catch unreachable;
 	while (token_index < tokens.items.len){
 		const token = tokens.items[token_index];
 		token_index += 1;
@@ -5685,9 +5687,11 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			vm = old_vm;
 			new.appendSlice(translated.items)
 				catch unreachable;
+			const tmp = tokens;
 			tokens = new;
 			token_index = 0;
-			new = Buffer(Token).init(mem.*);
+			new = tmp;
+			new.clearRetainingCapacity();
 			continue;
 		}
 		new.append(token)
@@ -5701,5 +5705,6 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	//stepthrough
 	//backtrack
 	//inspect memory address
-//TODO rotating buffers
+//TODO debugger state for pure vs comptime vs runtime
 //TODO visual code show in debug view
+//TODO multicore?
