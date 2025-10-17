@@ -453,7 +453,7 @@ const TOKEN = enum {
 	USING,
 	IDENTIFIER,
 	LIT,
-	MOV, MOVL, MOVH,
+	MOV, MOVL, MOVH, MOVW,
 	ADD, SUB, MUL, DIV, MOD,
 	AND, OR, XOR, SHL, SHR, NOT, COM,
 	CMP, JMP,
@@ -559,6 +559,7 @@ pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) P
 	token_map.put("mov", .MOV) catch unreachable;
 	token_map.put("movl", .MOVL) catch unreachable;
 	token_map.put("movh", .MOVH) catch unreachable;
+	token_map.put("movw", .MOVW) catch unreachable;
 	token_map.put("add", .ADD) catch unreachable;
 	token_map.put("sub", .SUB) catch unreachable;
 	token_map.put("mul", .MUL) catch unreachable;
@@ -772,6 +773,10 @@ const Instruction = struct {
 			dest: Location,
 			src: Location
 		},
+		movew: struct {
+			dest: Location,
+			src: Location
+		},
 		compare: struct {
 			left: Location,
 			right: Location
@@ -981,6 +986,17 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 							.move=.{
 								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
 								.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							}
+						}
+					};
+				},
+				.MOVW => {
+					op = Instruction{
+						.tag=.movw,
+						.data=.{
+							.movew=.{
+								.dest = try parse_location_or_label(mem, tokens, token_index, labels, false),
+								.src = try parse_location_or_label(mem, tokens, token_index, labels, false)
 							}
 						}
 					};
@@ -1257,6 +1273,16 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					i += 4;
 					write_location(data, &i, dest);
 					write_location(data, &i, src);
+				},
+				.movew => {
+					const dest = reduce_location(&inst.data.movew.dest);
+					const src = reduce_location(&inst.data.movew.src);
+					store_u32(data, i, @intFromEnum(inst.tag));
+					i += 4;
+					write_location(data, &i, dest);
+					const bytes: [8]u8 = @bitCast(src.literal);
+					@memcpy(data[i..i+8], &bytes);
+					i += 8;
 				},
 				.alu => {
 					const dest = reduce_location(&inst.data.alu.dest);
@@ -1609,7 +1635,7 @@ pub fn val64(l: Location) RuntimeError!u64 {
 
 const Opcode = enum(u8) {
 	mov_ii=0, mov_il, mov_id,
-	mov_di, mov_dl, mov_dd,
+	mov_di, mov_dl, mov_dd, movw,
 	movh_ii, movh_il, movh_id,
 	movh_di, movh_dl, movh_dd,
 	movl_ii, movl_il, movl_id,
@@ -1661,8 +1687,8 @@ pub fn interpret(start:u64) void {
 	vm.half_words = std.mem.bytesAsSlice(u32, vm.mem[0..]);
 	const ip = &vm.words[vm.ip/8];
 	ip.* = start/8;
-	const ops: [233]OpBytesFn = .{
-		mov_ii_bytes, mov_il_bytes, mov_id_bytes, mov_di_bytes, mov_dl_bytes, mov_dd_bytes,
+	const ops: [234]OpBytesFn = .{
+		mov_ii_bytes, mov_il_bytes, mov_id_bytes, mov_di_bytes, mov_dl_bytes, mov_dd_bytes, movw_bytes,
 		movh_ii_bytes, movh_il_bytes, movh_id_bytes, movh_di_bytes, movh_dl_bytes, movh_dd_bytes,
 		movl_ii_bytes, movl_il_bytes, movl_id_bytes, movl_di_bytes, movl_dl_bytes, movl_dd_bytes,
 		add_iii_bytes, add_iil_bytes, add_iid_bytes, add_ili_bytes, add_ill_bytes, add_ild_bytes, add_idi_bytes, add_idl_bytes, add_idd_bytes, add_dii_bytes, add_dil_bytes, add_did_bytes, add_dli_bytes, add_dll_bytes, add_dld_bytes, add_ddi_bytes, add_ddl_bytes, add_ddd_bytes,
@@ -1757,7 +1783,7 @@ pub fn debug_show_ref_path(lit: u64) void {
 	if (lit/8 < vm.words.len){
 		ref = vm.words[lit/8];
 	}
-	if (ref < vm.words.len){
+	if (ref/8 < vm.words.len){
 		deref = vm.words[ref/8];
 	}
 	stdout.print("                           | {x:08} -> {x:016} -> {x:016} |\n", .{lit, ref, deref}) catch unreachable;
@@ -1829,6 +1855,16 @@ pub fn mov_dd_bytes(ip: *align(1) u64) bool {
 	const src_imm = vm.words[src_name >> 3];
 	const src = vm.words[src_imm >> 3];
 	vm.words[dest >> 3] = src;
+	return true;
+}
+
+pub fn movw_bytes(ip: *align(1) u64) bool {
+	const p = ip.*;
+	ip.* += 2;
+	const reg_chunk = vm.words[p];
+	const arg = vm.words[p+1];
+	const reg = reg_chunk >> 32;
+	vm.words[reg >> 3] = arg;
 	return true;
 }
 
