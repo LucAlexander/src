@@ -3,6 +3,7 @@ const rl = @import("raylib");
 const Buffer = std.ArrayList;
 
 const debug = true;
+const debug_comp = true;
 
 var error_index:u64 = 0;
 var error_buffer: [512]u8 = undefined;
@@ -1706,19 +1707,17 @@ pub fn interpret(start:u64) void {
 	};
 	var running = true;
 	while (running) {
-		if (debug){
-			if (comp_section){
-				const stdout = std.io.getStdOut().writer();
-				stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
-				debug_show_instruction_ref_path(vm.words[vm.ip/8]);
-				debug_show_instruction_ref_path(vm.words[vm.ip/8]-2);
-				stdout.print("\x1b[H", .{}) catch unreachable;
-				debug_show_registers();
-				debug_show_instructions();
-				var stdin = std.io.getStdIn().reader();
-				var buffer: [1]u8 = undefined;
-				_ = stdin.read(&buffer) catch unreachable;
-			}
+		if ((!comp_section and debug) or (comp_section and debug_comp)){
+			const stdout = std.io.getStdOut().writer();
+			stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
+			debug_show_instruction_ref_path(vm.words[vm.ip/8]);
+			debug_show_instruction_ref_path(vm.words[vm.ip/8]-2);
+			stdout.print("\x1b[H", .{}) catch unreachable;
+			debug_show_registers();
+			debug_show_instructions();
+			var stdin = std.io.getStdIn().reader();
+			var buffer: [1]u8 = undefined;
+			_ = stdin.read(&buffer) catch unreachable;
 		}
 		running = ops[vm.words[ip.*]&0xFFFFFFFF](ip);
 	}
