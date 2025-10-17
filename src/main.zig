@@ -12,7 +12,7 @@ var error_token: ?Token = null;
 var uid: []const u8 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 var iden_hashes = std.StringHashMap(u64).init(std.heap.page_allocator);
-var current_iden: u64 = 0;
+var current_iden: u64 = 0x0000000100000000;
 
 var persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
 var comp_persistent = std.StringHashMap(u64).init(std.heap.page_allocator);
@@ -325,6 +325,7 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 	}
 	var new_stream = parse_pass(mem, token_stream.*) catch |err| {
 		std.debug.print("Parse pass error: {}\n", .{err});
+		report_error(token_stream.*, null);
 		return null;
 	};
 	var index:u64 = 0;
@@ -474,6 +475,8 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	var i: u64 = 0;
 	var token_map = std.StringHashMap(TOKEN).init(mem.*);
 	token_map.put("bind", .BIND) catch unreachable;
+	token_map.put("pass", .PASS_START) catch unreachable;
+	token_map.put("end", .PASS_END) catch unreachable;
 	token_map.put("using_opinion", .USING) catch unreachable;
 	var tokens = Buffer(Token).init(mem.*);
 	var line: u64 = 1;
@@ -582,6 +585,9 @@ pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) P
 	token_map.put("r1", .R1) catch unreachable;
 	token_map.put("r2", .R2) catch unreachable;
 	token_map.put("r3", .R3) catch unreachable;
+	token_map.put("!", .LIT) catch unreachable;
+	token_map.put("[", .OPEN_BRACK) catch unreachable;
+	token_map.put("]", .CLOSE_BRACK) catch unreachable;
 	for (tokens.items) |*token| {
 		if (token_map.get(token.text)) |tag| {
 			token.tag = tag;
@@ -650,11 +656,12 @@ pub fn report_error(original: Buffer(Token), current: ?Buffer(Token)) void {
 					}
 				}
 			}
+			std.debug.print("\n", .{});
 		}
 		if (tok.line == 0 or tok.source_index == 0){
 			return;
 		}
-		stderr.print("\n\nIn source: \n", .{}) catch unreachable;
+		stderr.print("\nIn source: \n", .{}) catch unreachable;
 		token_index = 0;
 		line = 1;
 		while (token_index < original.items.len){
@@ -1356,6 +1363,11 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 				token_index.* += 1;
 			}
 			if (token.tag != .IDENTIFIER) {
+				if (token.tag == .WHITESPACE or token.tag == .LINE_END){
+					return Location {
+						.literal = hash_global_enum(token)
+					};
+				}
 				set_error(token_index.*-1, token, "Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
 				return ParseError.UnexpectedToken;
 			}
@@ -1671,7 +1683,7 @@ pub fn interpret(start:u64) void {
 	var running = true;
 	while (running) {
 		if (debug){
-			if (!comp_section){
+			if (comp_section){
 				const stdout = std.io.getStdOut().writer();
 				stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
 				debug_show_instruction_ref_path(vm.words[vm.ip/8]);
@@ -5454,6 +5466,8 @@ pub fn set_error(index: u64, token: ?Token, comptime fmt: []const u8, args: anyt
 }
 
 pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseError!Buffer(Token) {
+	pass_vm.words = std.mem.bytesAsSlice(u64, pass_vm.mem[0..]);
+	pass_vm.half_words = std.mem.bytesAsSlice(u32, pass_vm.mem[0..]);
 	var token_index:u64 = 0;
 	var new = Buffer(Token).init(mem.*);
 	var tokens = input;
@@ -5467,14 +5481,19 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 				const inner = tokens.items[token_index];
 				if (inner.tag == .PASS_END){
 					end = token_index;
+					token_index += 1;
 					break;
 				}
+				token_index += 1;
 			}
 			var index:u64 = 0;
 			var slice = Buffer(Token).init(mem.*);
 			slice.appendSlice(tokens.items[start..end])
 				catch unreachable;
 			const program_len = try parse_bytecode(mem, pass_vm.mem[start_ip..], &slice, &index, false);
+			if(debug){
+				std.debug.print("pass program_len: {}\n", .{program_len});
+			}
 			const source_addr = start_ip+program_len;
 			var source_slice = pass_vm.words[source_addr/8..];
 			var source_len:u64 = 0;
@@ -5486,33 +5505,75 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			const dest_addr = start_ip+program_len+(source_len*8);
 			pass_vm.words[pass_vm.r0/8] = source_addr;
 			pass_vm.words[pass_vm.r1/8] = dest_addr;
+			if (debug){
+				std.debug.print("pass program dest_addr: {}\n", .{dest_addr/8});
+			}
 			const old_vm = vm;
 			vm = pass_vm;
 			comp_section = true;
 			interpret(start_ip);
 			comp_section = false;
-			vm = old_vm;
-			const end_addr = pass_vm.words[pass_vm.r1/8]/8;
+			const end_addr = vm.words[vm.r1/8]/8;
+			if(debug){
+				std.debug.print("pass program end_addr: {}\n", .{end_addr});
+			}
 			var translated = Buffer(Token).init(mem.*);
-			const word_index = dest_addr/8;
+			var word_index = dest_addr/8;
 			var it = iden_hashes.iterator();
-			var lookup: []Token = mem.alloc(Token, current_iden) catch unreachable;
+			var lookup: []Token = mem.alloc(Token, current_iden-0x0000000100000000) catch unreachable;
 			while (it.next()) |ptr| {
 				var copy = mem.alloc(u8, ptr.key_ptr.len) catch unreachable;
 				for (0..copy.len) |i| {
 					copy[i] = ptr.key_ptr.*[i];
 				}
-				lookup[ptr.value_ptr.*] = Token{
-					.tag=.IDENTIFIER,
-					.text=copy,
-					.line=0,
-					.source_index=0
-				};
+				if (ptr.value_ptr.* > 0xFFFFFFFF){
+					if (std.mem.eql(u8, copy, " ")){
+						lookup[ptr.value_ptr.*-0x100000000] = Token{
+							.tag=.SPACE,
+							.text=copy,
+							.line=0,
+							.source_index=0
+						};
+					}
+					else if (std.mem.eql(u8, copy, "\n")){
+						lookup[ptr.value_ptr.*-0x100000000] = Token{
+							.tag=.NEW_LINE,
+							.text=copy,
+							.line=0,
+							.source_index=0
+						};
+					}
+					else if (std.mem.eql(u8, copy, "\t")){
+						lookup[ptr.value_ptr.*-0x100000000] = Token{
+							.tag=.TAB,
+							.text=copy,
+							.line=0,
+							.source_index=0
+						};
+					}
+					else{
+						lookup[ptr.value_ptr.*-0x100000000] = Token{
+							.tag=.IDENTIFIER,
+							.text=copy,
+							.line=0,
+							.source_index=0
+						};
+					}
+				}
 			}
 			while (word_index < end_addr){
-				translated.append(lookup[pass_vm.words[word_index]])
+				const enumeration = vm.words[word_index];
+				word_index += 1;
+				if (enumeration > 0xFFFFFFFF){
+					const inst = lookup[enumeration-0x100000000];
+					translated.append(inst)
+						catch unreachable;
+					continue;
+				}
+				translated.append(mk_token_from_u64(mem, enumeration))
 					catch unreachable;
 			}
+			vm = old_vm;
 			new.appendSlice(translated.items)
 				catch unreachable;
 			tokens = new;
