@@ -24,10 +24,13 @@ const pixel_width = 4;
 const word_size = 8;
 const frame_buffer_h = 180;
 
+const cores = 1;
+threadlocal var active_core: u64 = 0;
+
 const frame_buffer = frame_buffer_w*frame_buffer_h*pixel_width;
 const mem_size = 0x100000;
 const main_size = mem_size+frame_buffer;
-const register_section = word_size*6;
+const register_section = word_size*6*cores;
 const start_ip = frame_buffer;
 const total_mem_size = frame_buffer+mem_size+register_section;
 
@@ -35,25 +38,41 @@ const VM = struct {
 	mem: [total_mem_size]u8,
 	words: []align(1) u64,
 	half_words: []align(1) u32,
-	r0: u64,
-	r1: u64,
-	r2: u64,
-	r3: u64,
-	sr: u64,
-	ip: u64,
+	r0: [cores]u64,
+	r1: [cores]u64,
+	r2: [cores]u64,
+	r3: [cores]u64,
+	sr: [cores]u64,
+	ip: [cores]u64,
 	
 	pub fn init() VM {
-		return VM{
+		var mach = VM{
 			.mem=undefined,
 			.words=undefined,
 			.half_words=undefined,
-			.r0=main_size,
-			.r1=main_size+1*8,
-			.r2=main_size+2*8,
-			.r3=main_size+3*8,
-			.sr=main_size+4*8,
-			.ip=main_size+5*8
+			.r0=undefined,
+			.r1=undefined,
+			.r2=undefined,
+			.r3=undefined,
+			.sr=undefined,
+			.ip=undefined
 		};
+		var offset:u64 = 0;
+		for (0..cores) |i| {
+			mach.r0[i] = main_size+offset*8;
+			offset += 1;
+			mach.r1[i] = main_size+offset*8;
+			offset += 1;
+			mach.r2[i] = main_size+offset*8;
+			offset += 1;
+			mach.r3[i] = main_size+offset*8;
+			offset += 1;
+			mach.sr[i] = main_size+offset*8;
+			offset += 1;
+			mach.ip[i] = main_size+offset*8;
+			offset += 1;
+		}
+		return mach;
 	}
 };
 
@@ -1576,11 +1595,11 @@ pub fn loc64(l: Location, val: u64) void {
 		}, 
 		.register => {
 			switch (l.register){
-				.R0 => {store_u64(vm.r0, val);},
-				.R1 => {store_u64(vm.r1, val);},
-				.R2 => {store_u64(vm.r2, val);},
-				.R3 => {store_u64(vm.r3, val);},
-				.IP => {store_u64(vm.ip, val);},
+				.R0 => {store_u64(vm.r0[active_core], val);},
+				.R1 => {store_u64(vm.r1[active_core], val);},
+				.R2 => {store_u64(vm.r2[active_core], val);},
+				.R3 => {store_u64(vm.r3[active_core], val);},
+				.IP => {store_u64(vm.ip[active_core], val);},
 				else => {
 					return;
 				}
@@ -1603,11 +1622,11 @@ pub fn val64(l: Location) RuntimeError!u64 {
 		},
 		.register => {
 			switch (l.register){
-				.R0 => {return load_u64(vm.r0);},
-				.R1 => {return load_u64(vm.r1);},
-				.R2 => {return load_u64(vm.r2);},
-				.R3 => {return load_u64(vm.r3);},
-				.IP => {return load_u64(vm.r3);},
+				.R0 => {return load_u64(vm.r0[active_core]);},
+				.R1 => {return load_u64(vm.r1[active_core]);},
+				.R2 => {return load_u64(vm.r2[active_core]);},
+				.R3 => {return load_u64(vm.r3[active_core]);},
+				.IP => {return load_u64(vm.r3[active_core]);},
 				else => {
 					return RuntimeError.UnknownRegister;
 				}
@@ -1673,7 +1692,7 @@ const OpBytesFn = *const fn (*align(1) u64) bool;
 pub fn interpret(start:u64) void {
 	vm.words = std.mem.bytesAsSlice(u64, vm.mem[0..]);
 	vm.half_words = std.mem.bytesAsSlice(u32, vm.mem[0..]);
-	const ip = &vm.words[vm.ip/8];
+	const ip = &vm.words[vm.ip[active_core]/8];
 	ip.* = start/8;
 	const ops: [234]OpBytesFn = .{
 		mov_ii_bytes, mov_il_bytes, mov_id_bytes, mov_di_bytes, mov_dl_bytes, mov_dd_bytes, movw_bytes,
@@ -1699,8 +1718,8 @@ pub fn interpret(start:u64) void {
 		if ((!comp_section and debug) or (comp_section and debug_comp)){
 			const stdout = std.io.getStdOut().writer();
 			stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
-			debug_show_instruction_ref_path(vm.words[vm.ip/8]);
-			debug_show_instruction_ref_path(vm.words[vm.ip/8]-2);
+			debug_show_instruction_ref_path(vm.words[vm.ip[active_core]/8]);
+			debug_show_instruction_ref_path(vm.words[vm.ip[active_core]/8]-2);
 			stdout.print("\x1b[H", .{}) catch unreachable;
 			debug_show_registers();
 			debug_show_instructions();
@@ -1715,18 +1734,18 @@ pub fn interpret(start:u64) void {
 pub fn debug_show_registers() void {
 	const stdout = std.io.getStdOut().writer();
 	stdout.print(",---------------------.\n", .{}) catch unreachable;
-	stdout.print("| r0: {x:016} |\n", .{vm.words[vm.r0/8]}) catch unreachable;
-	stdout.print("| r1: {x:016} |\n", .{vm.words[vm.r1/8]}) catch unreachable;
-	stdout.print("| r2: {x:016} |\n", .{vm.words[vm.r2/8]}) catch unreachable;
-	stdout.print("| r3: {x:016} |\n", .{vm.words[vm.r3/8]}) catch unreachable;
-	stdout.print("| \x1b[1;31mip: {x:016}\x1b[0m |\n", .{vm.words[vm.ip/8]*8}) catch unreachable;
+	stdout.print("| r0: {x:016} |\n", .{vm.words[vm.r0[active_core]/8]}) catch unreachable;
+	stdout.print("| r1: {x:016} |\n", .{vm.words[vm.r1[active_core]/8]}) catch unreachable;
+	stdout.print("| r2: {x:016} |\n", .{vm.words[vm.r2[active_core]/8]}) catch unreachable;
+	stdout.print("| r3: {x:016} |\n", .{vm.words[vm.r3[active_core]/8]}) catch unreachable;
+	stdout.print("| \x1b[1;31mip: {x:016}\x1b[0m |\n", .{vm.words[vm.ip[active_core]/8]*8}) catch unreachable;
 	stdout.print("`----------------------'\n\n\n\n", .{}) catch unreachable;
 }
 
 pub fn debug_show_instructions() void {
 	const stdout = std.io.getStdOut().writer();
 	stdout.print(",-----------------------------------------------------.\n", .{}) catch unreachable;
-	var inst_start = vm.words[vm.ip/8];
+	var inst_start = vm.words[vm.ip[active_core]/8];
 	if (inst_start < 16){
 		inst_start = 0;
 	}
@@ -1736,11 +1755,11 @@ pub fn debug_show_instructions() void {
 	const inst_end = inst_start+32;
 	while (inst_start < inst_end): (inst_start += 2){
 		stdout.print("| ", .{}) catch unreachable;
-		if (inst_start == vm.words[vm.ip/8]){
+		if (inst_start == vm.words[vm.ip[active_core]/8]){
 			stdout.print("\x1b[1;31m", .{}) catch unreachable;
 		}
 		stdout.print("{x:016}: {x:016} {x:016}", .{inst_start*8, vm.words[inst_start], vm.words[inst_start+1]}) catch unreachable;
-		if (inst_start == vm.words[vm.ip/8]){
+		if (inst_start == vm.words[vm.ip[active_core]/8]){
 			stdout.print("\x1b[0m", .{}) catch unreachable;
 		}
 		stdout.print(" |\n",.{}) catch unreachable;
@@ -4845,13 +4864,13 @@ pub fn cmp_ii_bytes(ip: *align(1) u64) bool {
 	const left = vm.words[left_name >> 3];
 	const right = vm.words[right_name >> 3];
 	if (left > right){
-		vm.mem[vm.sr] = 1;
+		vm.mem[vm.sr[active_core]] = 1;
 	}
 	else if (left < right){
-		vm.mem[vm.sr] = 2;
+		vm.mem[vm.sr[active_core]] = 2;
 	}
 	else {
-		vm.mem[vm.sr] = 0;
+		vm.mem[vm.sr[active_core]] = 0;
 	}
 	ip.* += 2;
 	return true;
@@ -4863,13 +4882,13 @@ pub fn cmp_il_bytes(ip: *align(1) u64) bool {
 	const right = args >> 32;
 	const left = vm.words[left_name >> 3];
 	if (left > right){
-		vm.mem[vm.sr] = 1;
+		vm.mem[vm.sr[active_core]] = 1;
 	}
 	else if (left < right){
-		vm.mem[vm.sr] = 2;
+		vm.mem[vm.sr[active_core]] = 2;
 	}
 	else {
-		vm.mem[vm.sr] = 0;
+		vm.mem[vm.sr[active_core]] = 0;
 	}
 	ip.* += 2;
 	return true;
@@ -4883,13 +4902,13 @@ pub fn cmp_id_bytes(ip: *align(1) u64) bool {
 	const right_imm = vm.words[right_name >> 3];
 	const right = vm.words[right_imm >> 3];
 	if (left > right){
-		vm.mem[vm.sr] = 1;
+		vm.mem[vm.sr[active_core]] = 1;
 	}
 	else if (left < right){
-		vm.mem[vm.sr] = 2;
+		vm.mem[vm.sr[active_core]] = 2;
 	}
 	else {
-		vm.mem[vm.sr] = 0;
+		vm.mem[vm.sr[active_core]] = 0;
 	}
 	ip.* += 2;
 	return true;
@@ -4901,13 +4920,13 @@ pub fn cmp_li_bytes(ip: *align(1) u64) bool {
 	const right_name = args >> 32;
 	const right = vm.words[right_name >> 3];
 	if (left > right){
-		vm.mem[vm.sr] = 1;
+		vm.mem[vm.sr[active_core]] = 1;
 	}
 	else if (left < right){
-		vm.mem[vm.sr] = 2;
+		vm.mem[vm.sr[active_core]] = 2;
 	}
 	else {
-		vm.mem[vm.sr] = 0;
+		vm.mem[vm.sr[active_core]] = 0;
 	}
 	ip.* += 2;
 	return true;
@@ -4918,13 +4937,13 @@ pub fn cmp_ll_bytes(ip: *align(1) u64) bool {
 	const left = (args & 0xFFFFFFFF);
 	const right = args >> 32;
 	if (left > right){
-		vm.mem[vm.sr] = 1;
+		vm.mem[vm.sr[active_core]] = 1;
 	}
 	else if (left < right){
-		vm.mem[vm.sr] = 2;
+		vm.mem[vm.sr[active_core]] = 2;
 	}
 	else {
-		vm.mem[vm.sr] = 0;
+		vm.mem[vm.sr[active_core]] = 0;
 	}
 	ip.* += 2;
 	return true;
@@ -4937,13 +4956,13 @@ pub fn cmp_ld_bytes(ip: *align(1) u64) bool {
 	const right_imm = vm.words[right_name >> 3];
 	const right = vm.words[right_imm >> 3];
 	if (left > right){
-		vm.mem[vm.sr] = 1;
+		vm.mem[vm.sr[active_core]] = 1;
 	}
 	else if (left < right){
-		vm.mem[vm.sr] = 2;
+		vm.mem[vm.sr[active_core]] = 2;
 	}
 	else {
-		vm.mem[vm.sr] = 0;
+		vm.mem[vm.sr[active_core]] = 0;
 	}
 	ip.* += 2;
 	return true;
@@ -4957,13 +4976,13 @@ pub fn cmp_di_bytes(ip: *align(1) u64) bool {
 	const right_name = args >> 32;
 	const right = vm.words[right_name >> 3];
 	if (left > right){
-		vm.mem[vm.sr] = 1;
+		vm.mem[vm.sr[active_core]] = 1;
 	}
 	else if (left < right){
-		vm.mem[vm.sr] = 2;
+		vm.mem[vm.sr[active_core]] = 2;
 	}
 	else {
-		vm.mem[vm.sr] = 0;
+		vm.mem[vm.sr[active_core]] = 0;
 	}
 	ip.* += 2;
 	return true;
@@ -4976,13 +4995,13 @@ pub fn cmp_dl_bytes(ip: *align(1) u64) bool {
 	const left = vm.words[left_imm >> 3];
 	const right = args >> 32;
 	if (left > right){
-		vm.mem[vm.sr] = 1;
+		vm.mem[vm.sr[active_core]] = 1;
 	}
 	else if (left < right){
-		vm.mem[vm.sr] = 2;
+		vm.mem[vm.sr[active_core]] = 2;
 	}
 	else {
-		vm.mem[vm.sr] = 0;
+		vm.mem[vm.sr[active_core]] = 0;
 	}
 	ip.* += 2;
 	return true;
@@ -4997,13 +5016,13 @@ pub fn cmp_dd_bytes(ip: *align(1) u64) bool {
 	const right_imm = vm.words[right_name >> 3];
 	const right = vm.words[right_imm >> 3];
 	if (left > right){
-		vm.mem[vm.sr] = 1;
+		vm.mem[vm.sr[active_core]] = 1;
 	}
 	else if (left < right){
-		vm.mem[vm.sr] = 2;
+		vm.mem[vm.sr[active_core]] = 2;
 	}
 	else {
-		vm.mem[vm.sr] = 0;
+		vm.mem[vm.sr[active_core]] = 0;
 	}
 	ip.* += 2;
 	return true;
@@ -5031,7 +5050,7 @@ pub fn jmp_d_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jne_i_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] != 0){
+	if (vm.mem[vm.sr[active_core]] != 0){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
 		ip.* = dest;
@@ -5043,7 +5062,7 @@ pub fn jne_i_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jne_l_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] != 0){
+	if (vm.mem[vm.sr[active_core]] != 0){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
 	}
@@ -5054,7 +5073,7 @@ pub fn jne_l_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jne_d_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] != 0){
+	if (vm.mem[vm.sr[active_core]] != 0){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
 		const dest = vm.words[dest_imm >> 3];
@@ -5067,7 +5086,7 @@ pub fn jne_d_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jeq_i_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] == 0){
+	if (vm.mem[vm.sr[active_core]] == 0){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
 		ip.* = dest;
@@ -5079,7 +5098,7 @@ pub fn jeq_i_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jeq_l_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] == 0){
+	if (vm.mem[vm.sr[active_core]] == 0){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
 	}
@@ -5090,7 +5109,7 @@ pub fn jeq_l_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jeq_d_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] == 0){
+	if (vm.mem[vm.sr[active_core]] == 0){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
 		const dest = vm.words[dest_imm >> 3];
@@ -5103,7 +5122,7 @@ pub fn jeq_d_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jgt_i_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] == 1){
+	if (vm.mem[vm.sr[active_core]] == 1){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
 		ip.* = dest;
@@ -5115,7 +5134,7 @@ pub fn jgt_i_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jgt_l_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] == 1){
+	if (vm.mem[vm.sr[active_core]] == 1){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
 	}
@@ -5126,7 +5145,7 @@ pub fn jgt_l_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jgt_d_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] == 1){
+	if (vm.mem[vm.sr[active_core]] == 1){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
 		const dest = vm.words[dest_imm >> 3];
@@ -5139,7 +5158,7 @@ pub fn jgt_d_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jge_i_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] != 2){
+	if (vm.mem[vm.sr[active_core]] != 2){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
 		ip.* = dest;
@@ -5151,7 +5170,7 @@ pub fn jge_i_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jge_l_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] != 2){
+	if (vm.mem[vm.sr[active_core]] != 2){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
 	}
@@ -5162,7 +5181,7 @@ pub fn jge_l_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jge_d_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] != 2){
+	if (vm.mem[vm.sr[active_core]] != 2){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
 		const dest = vm.words[dest_imm >> 3];
@@ -5175,7 +5194,7 @@ pub fn jge_d_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jlt_i_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] == 2){
+	if (vm.mem[vm.sr[active_core]] == 2){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
 		ip.* = dest;
@@ -5187,7 +5206,7 @@ pub fn jlt_i_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jlt_l_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] == 2){
+	if (vm.mem[vm.sr[active_core]] == 2){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
 	}
@@ -5198,7 +5217,7 @@ pub fn jlt_l_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jlt_d_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] == 2){
+	if (vm.mem[vm.sr[active_core]] == 2){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
 		const dest = vm.words[dest_imm >> 3];
@@ -5211,7 +5230,7 @@ pub fn jlt_d_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jle_i_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] != 1){
+	if (vm.mem[vm.sr[active_core]] != 1){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest = vm.words[label >> 3];
 		ip.* = dest;
@@ -5223,7 +5242,7 @@ pub fn jle_i_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jle_l_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] != 1){
+	if (vm.mem[vm.sr[active_core]] != 1){
 		const label = vm.words[ip.*+1] >> 32;
 		ip.* = label;
 	}
@@ -5234,7 +5253,7 @@ pub fn jle_l_bytes(ip: *align(1) u64) bool {
 }
 
 pub fn jle_d_bytes(ip: *align(1) u64) bool {
-	if (vm.mem[vm.sr] != 1){
+	if (vm.mem[vm.sr[active_core]] != 1){
 		const label = vm.words[ip.*+1] >> 32;
 		const dest_imm = vm.words[label >> 3];
 		const dest = vm.words[dest_imm >> 3];
@@ -5248,7 +5267,7 @@ pub fn jle_d_bytes(ip: *align(1) u64) bool {
 
 pub fn int_bytes(ip: *align(1) u64) bool {
 	ip.* += 2;
-	switch (vm.mem[vm.r0]){
+	switch (vm.mem[vm.r0[active_core]]){
 		0 => {
 			rl.updateTexture(frame_buffer_texture, &vm.mem[0]);
 			rl.beginDrawing();
@@ -5262,51 +5281,51 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 			return false;
 		},
 		2 => {
-			std.debug.print("{c}", .{vm.mem[vm.r1]});
+			std.debug.print("{c}", .{vm.mem[vm.r1[active_core]]});
 			return true;
 		},
 		3 => {
-			if (rl.isKeyDown(@enumFromInt(vm.words[vm.r1/8]))){
-				vm.mem[vm.r2] = 1;
+			if (rl.isKeyDown(@enumFromInt(vm.words[vm.r1[active_core]/8]))){
+				vm.mem[vm.r2[active_core]] = 1;
 				return true;
 			}
-			vm.mem[vm.r2] = 0;
+			vm.mem[vm.r2[active_core]] = 0;
 			return true;
 		},
 		4 => {
-			if (rl.isKeyPressed(@enumFromInt(vm.words[vm.r1/8]))){
-				vm.mem[vm.r2] = 1;
+			if (rl.isKeyPressed(@enumFromInt(vm.words[vm.r1[active_core]/8]))){
+				vm.mem[vm.r2[active_core]] = 1;
 				return true;
 			}
-			vm.mem[vm.r2] = 0;
+			vm.mem[vm.r2[active_core]] = 0;
 			return true;
 		},
 		5 => {
 			const mp = rl.getMousePosition();
-			vm.mem[vm.r1] = @intFromFloat(mp.x);
-			vm.mem[vm.r2] = @intFromFloat(mp.y);
+			vm.mem[vm.r1[active_core]] = @intFromFloat(mp.x);
+			vm.mem[vm.r2[active_core]] = @intFromFloat(mp.y);
 			return true;
 		},
 		6 => {
-			if (rl.isMouseButtonDown(@enumFromInt(vm.words[vm.r1/8]))){
-				vm.mem[vm.r2] = 1;
+			if (rl.isMouseButtonDown(@enumFromInt(vm.words[vm.r1[active_core]/8]))){
+				vm.mem[vm.r2[active_core]] = 1;
 				return true;
 			}
-			vm.mem[vm.r2] = 0;
+			vm.mem[vm.r2[active_core]] = 0;
 			return true;
 		},
 		7 => {
-			if (rl.isMouseButtonPressed(@enumFromInt(vm.words[vm.r1/8]))){
-				vm.mem[vm.r2] = 1;
+			if (rl.isMouseButtonPressed(@enumFromInt(vm.words[vm.r1[active_core]/8]))){
+				vm.mem[vm.r2[active_core]] = 1;
 				return true;
 			}
-			vm.mem[vm.r2] = 0;
+			vm.mem[vm.r2[active_core]] = 0;
 			return true;
 		},
 		8 => {
-			const addr = vm.mem[vm.r1];
-			const len = vm.mem[vm.r2];
-			const dest = vm.mem[vm.r3];
+			const addr = vm.mem[vm.r1[active_core]];
+			const len = vm.mem[vm.r2[active_core]];
+			const dest = vm.mem[vm.r3[active_core]];
 			const slice = vm.mem[addr..addr+len];
 			compile_and_load(slice, dest);
 		},
@@ -5342,27 +5361,27 @@ pub fn reduce_location(loc: *Location) Location {
 			switch (loc.register){
 				.R0 => {
 					loc.* = Location{
-						.immediate = vm.r0
+						.immediate = vm.r0[active_core]
 					};
 				},
 				.R1 => {
 					loc.* = Location{
-						.immediate = vm.r1
+						.immediate = vm.r1[active_core]
 					};
 				},
 				.R2 => {
 					loc.* = Location{
-						.immediate = vm.r2
+						.immediate = vm.r2[active_core]
 					};
 				},
 				.R3 => {
 					loc.* = Location{
-						.immediate = vm.r3
+						.immediate = vm.r3[active_core]
 					};
 				},
 				.IP => {
 					loc.* = Location{
-						.immediate = vm.ip
+						.immediate = vm.ip[active_core]
 					};
 				},
 				else => {unreachable;}
@@ -5593,8 +5612,8 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 				source_len += 1;
 			}
 			const dest_addr = start_ip+program_len+(source_len*8);
-			pass_vm.words[pass_vm.r0/8] = source_addr;
-			pass_vm.words[pass_vm.r1/8] = dest_addr;
+			pass_vm.words[pass_vm.r0[active_core]/8] = source_addr;
+			pass_vm.words[pass_vm.r1[active_core]/8] = dest_addr;
 			if (debug){
 				std.debug.print("pass program dest_addr: {}\n", .{dest_addr/8});
 			}
@@ -5603,7 +5622,7 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			comp_section = true;
 			interpret(start_ip);
 			comp_section = false;
-			const end_addr = vm.words[vm.r1/8]/8;
+			const end_addr = vm.words[vm.r1[active_core]/8]/8;
 			if(debug){
 				std.debug.print("pass program end_addr: {}\n", .{end_addr});
 			}
@@ -5684,6 +5703,7 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	//stepthrough
 	//backtrack
 	//inspect memory address
-//TODO debugger state for pure vs comptime vs runtime
 //TODO visual code show in debug view
 //TODO multicore?
+	// multiple vms
+	// branch interrupt, if a cpu is available and waiting for instructions it puts them there, otherwise returns error code in r0
