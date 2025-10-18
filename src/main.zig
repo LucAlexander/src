@@ -160,6 +160,20 @@ pub fn main() !void {
 		}
 		filename = arg;
 	}
+	if (input_filename) |infile| {
+		var thread_index: u64 = 0;
+		while (thread_index < threads.len){
+			threads[thread_index] = std.Thread.spawn(.{}, core_worker, .{thread_index}) catch unreachable;
+			thread_index += 1;
+		}
+		run_file(infile);
+		thread_index = 0;
+		while (thread_index < threads.len){
+			threads[thread_index].join();
+			thread_index += 1;
+		}
+		return;
+	}
 	if (filename) |name| {
 		var thread_index: u64 = 0;
 		while (thread_index < threads.len){
@@ -369,6 +383,7 @@ pub fn run_file(infilename: []u8) void {
 	const core = awaken_core(start_ip);
 	std.debug.assert(core != 0);
 	await_cores();
+	kill_cores = true;
 }
 
 pub fn await_cores() void {
