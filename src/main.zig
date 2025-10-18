@@ -24,7 +24,7 @@ const pixel_width = 4;
 const word_size = 8;
 const frame_buffer_h = 180;
 
-const cores = 1;
+const cores = 4;
 threadlocal var active_core: u64 = 0;
 var threads: [cores]std.Thread = undefined;
 var thread_mutex = std.Thread.Mutex{};
@@ -195,6 +195,9 @@ pub fn main() !void {
 pub fn core_worker(index: u64) void {
 	active_core = index;
 	while (!kill_cores){
+		if (vm.words.len == 0){
+			continue;
+		}
 		if (vm.words[vm.ip[active_core]>>3] == 0){
 			std.time.sleep(1_000_000); // 1ms
 			continue;
@@ -5457,8 +5460,8 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 			compile_and_load(slice, dest);
 		},
 		9 => {
-			const new_ip = vm.mem[vm.r1[active_core]];
-			const core = awaken_core(new_ip);
+			const new_ip = vm.words[vm.r1[active_core]>>3];
+			const core = awaken_core(new_ip*8);
 			vm.words[vm.r0[active_core]>>3] = core;
 		},
 		else => {}
