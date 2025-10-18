@@ -29,6 +29,7 @@ threadlocal var active_core: u64 = 0;
 var threads: [cores]std.Thread = undefined;
 var thread_mutex = std.Thread.Mutex{};
 var cores_running: u64 = 0; // atomic
+var kill_cores = false;
 
 const frame_buffer = frame_buffer_w*frame_buffer_h*pixel_width;
 const mem_size = 0x100000;
@@ -179,7 +180,7 @@ pub fn main() !void {
 
 pub fn core_worker(index: u64) void {
 	active_core = index;
-	while (true){
+	while (!kill_cores){
 		if (vm.words[vm.ip[active_core]>>3] == 0){
 			std.time.sleep(1_000_000); // 1ms
 			continue;
@@ -438,6 +439,7 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 		const core = awaken_core(start_ip);
 		std.debug.assert(core != 0);
 		await_cores();
+		kill_cores = true;
 	}
 	return program_len;
 }
