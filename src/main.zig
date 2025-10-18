@@ -181,6 +181,7 @@ pub fn core_worker(index: u64) void {
 	active_core = index;
 	while (true){
 		if (vm.words[vm.ip[active_core]>>3] == 0){
+			std.time.sleep(1_000_000); // 1ms
 			continue;
 		}
 		interpret(vm.words[vm.ip[active_core]>>3]);
@@ -194,6 +195,9 @@ pub fn awaken_core(new_ip: u64) u64 {
 		if (vm.words[ip>>3] == 0){
 			vm.words[ip>>3] = new_ip;
 			_ = @atomicRmw(u64, &cores_running, .Add, 1, .seq_cst);
+			if (debug){
+				std.debug.print("awoke {}\n", .{i});
+			}
 			return i;
 		}
 	}
@@ -205,6 +209,9 @@ pub fn sleep_core() void {
 	defer thread_mutex.unlock();
 	vm.words[vm.ip[active_core]>>3] = 0;
 	_ = @atomicRmw(u64, &cores_running, .Sub, 1, .seq_cst);
+	if (debug){
+		std.debug.print("slept {}\n", .{active_core+1});
+	}
 }
 
 pub fn push_builtin_constants() void {
@@ -366,6 +373,9 @@ pub fn run_file(infilename: []u8) void {
 pub fn await_cores() void {
 	while (@atomicLoad(u64, &cores_running, .seq_cst) != 0){
 		std.time.sleep(1_000_000); // 1ms
+	}
+	if (debug) {
+		std.debug.print("All cores done\n", .{});
 	}
 }
 
@@ -1947,8 +1957,7 @@ pub fn movw_i_bytes(ip: *align(1) u64) bool {
 	ip.* += 2;
 	const reg_chunk = vm.words[p];
 	const arg = vm.words[p+1];
-	const loc_name = reg_chunk >> 32;
-	const loc = vm.words[loc_name >> 3];
+	const loc = reg_chunk >> 32;
 	vm.words[loc >> 3] = arg;
 	return true;
 }
