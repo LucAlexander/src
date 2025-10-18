@@ -332,11 +332,6 @@ pub fn compile(filename: []u8, output_filename: ?[]u8, expand_filename: ?[]u8, r
 	if (debug){
 		std.debug.print("initial------------------------------\n", .{});
 	}
-	rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
-	frame_buffer_texture = rl.loadTextureFromImage(frame_buffer_image) catch {
-		std.debug.print("Error creating texture\n", .{});
-		return;
-	};
 	if (expand_filename) |outfilename| {
 		_ = metaprogram(&tokens, &mem, false, outfilename);
 	}
@@ -1796,6 +1791,10 @@ pub fn partition_vm() void {
 }
 
 pub fn interpret(start:u64) void {
+	if (!rl.isWindowReady()){
+		rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
+		frame_buffer_texture = rl.loadTextureFromImage(frame_buffer_image) catch unreachable;
+	}
 	const ip = &vm.words[vm.ip[active_core]/8];
 	ip.* = start/8;
 	const ops: [236]OpBytesFn = .{
@@ -1996,8 +1995,7 @@ pub fn movw_d_bytes(ip: *align(1) u64) bool {
 	const arg = vm.words[p+1];
 	const loc_name = reg_chunk >> 32;
 	const loc = vm.words[loc_name >> 3];
-	const loc_deref = vm.words[loc >> 3];
-	vm.words[loc_deref >> 3] = arg;
+	vm.words[loc >> 3] = arg;
 	return true;
 }
 
