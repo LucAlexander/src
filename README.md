@@ -66,6 +66,7 @@ binds `hi_byte` to the constant stored in r1 on the comptime vm: `FF`.
 ```
 Builtin Regsiters = r0 | r1 | r2 | r3 | ip
 Opcodes = mov loc loc
+        | movw loc locw
         | movh loc loc
         | movl loc loc
         | add loc loc loc
@@ -90,8 +91,9 @@ Opcodes = mov loc loc
         | jge loc
         | int
 
-loc = [deref] | literal | address
-deref = literal | address
+loc = [deref] | literal32 | address
+locw = literal64
+deref = literal32 | address
 address = (hex integer)
 literal = !(hex integer)
 ```
@@ -133,6 +135,10 @@ r0: 8
 r1: in address of program
 r2: in length of program
 r3 <- address to write compiled program
+
+r0: 9
+r1: instruction pointer for new core to start at
+r0 <- core running, 0 for no core available
 ```
 
 ## Builtin Symbols
