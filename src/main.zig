@@ -26,6 +26,9 @@ const frame_buffer_h = 180;
 
 const cores = 1;
 threadlocal var active_core: u64 = 0;
+var threads: [cores]std.Thread = undefined;
+var thread_mutex = std.Thread.Mutex{};
+var cores_running: u64 = 0; // atomic
 
 const frame_buffer = frame_buffer_w*frame_buffer_h*pixel_width;
 const mem_size = 0x100000;
@@ -55,7 +58,7 @@ const VM = struct {
 			.r2=undefined,
 			.r3=undefined,
 			.sr=undefined,
-			.ip=undefined
+			.ip=undefined,
 		};
 		var offset:u64 = 0;
 		for (0..cores) |i| {
@@ -77,7 +80,7 @@ const VM = struct {
 };
 
 var vm: VM = VM.init();
-var pass_vm: VM  = VM.init();
+var pass_vm: VM = VM.init();
 
 var frame_buffer_image = rl.Image{
 	.data=&vm.mem[0],
@@ -90,6 +93,7 @@ var frame_buffer_image = rl.Image{
 var frame_buffer_texture:rl.Texture = undefined;
 
 pub fn main() !void {
+	partition_vm();
 	push_builtin_constants();
 	std.debug.assert(total_mem_size % 8 == 0);
 	const allocator = std.heap.page_allocator;
@@ -156,11 +160,51 @@ pub fn main() !void {
 		filename = arg;
 	}
 	if (filename) |name| {
+		var thread_index: u64 = 0;
+		while (thread_index < threads.len){
+			threads[thread_index] = std.Thread.spawn(.{}, core_worker, .{thread_index}) catch unreachable;
+			thread_index += 1;
+		}
 		compile(name, output_filename, expansion_filename, run);
+		thread_index = 0;
+		while (thread_index < threads.len){
+			threads[thread_index].join();
+			thread_index += 1;
+		}
 	}
 	else{
 		std.debug.print("Provide head filename\n", .{});
 	}
+}
+
+pub fn core_worker(index: u64) void {
+	active_core = index;
+	while (true){
+		if (vm.words[vm.ip[active_core]>>3] == 0){
+			continue;
+		}
+		interpret(vm.words[vm.ip[active_core]>>3]);
+	}
+}
+
+pub fn awaken_core(new_ip: u64) u64 {
+	thread_mutex.lock();
+	defer thread_mutex.unlock();
+	for (vm.ip, 1..) |ip, i| {
+		if (vm.words[ip>>3] == 0){
+			vm.words[ip>>3] = new_ip;
+			_ = @atomicRmw(u64, &cores_running, .Add, 1, .seq_cst);
+			return i;
+		}
+	}
+	return 0;
+}
+
+pub fn sleep_core() void {
+	thread_mutex.lock();
+	defer thread_mutex.unlock();
+	vm.words[vm.ip[active_core]>>3] = 0;
+	_ = @atomicRmw(u64, &cores_running, .Sub, 1, .seq_cst);
 }
 
 pub fn push_builtin_constants() void {
@@ -240,7 +284,6 @@ pub fn push_builtin_constants() void {
 	persistent.put("SRC_UP", @intFromEnum(rl.KeyboardKey.up)) catch unreachable;
 	persistent.put("SRC_DOWN", @intFromEnum(rl.KeyboardKey.down)) catch unreachable;
 	persistent.put("SRC_SPACE", @intFromEnum(rl.KeyboardKey.space)) catch unreachable;
-
 }
 
 pub fn compile(filename: []u8, output_filename: ?[]u8, expand_filename: ?[]u8, run: bool) void {
@@ -315,7 +358,15 @@ pub fn run_file(infilename: []u8) void {
 		std.debug.print("Error creating texture\n", .{});
 		return;
 	};
-	interpret(start_ip);
+	const core = awaken_core(start_ip);
+	std.debug.assert(core != 0);
+	await_cores();
+}
+
+pub fn await_cores() void {
+	while (@atomicLoad(u64, &cores_running, .seq_cst) != 0){
+		std.time.sleep(1_000_000); // 1ms
+	}
 }
 
 pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: bool, headless: ?[]u8) ?u64 {
@@ -368,12 +419,15 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 		return null;
 	};
 	vm = runtime;
+	partition_vm();
 	if (run){
 		if (debug){
 			std.debug.print("program length: {}\n", .{program_len});
 			std.debug.print("parsed bytecode--------------------\n", .{});
 		}
-		interpret(start_ip);
+		const core = awaken_core(start_ip);
+		std.debug.assert(core != 0);
+		await_cores();
 	}
 	return program_len;
 }
@@ -827,7 +881,9 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				if (debug){
 					std.debug.print("Parsed comp segment\n", .{});
 				}
-				interpret(start_ip);
+				const core = awaken_core(start_ip);
+				std.debug.assert(core != 0);
+				await_cores();
 				if (debug){
 					std.debug.print("Exiting comp segment\n", .{});
 				}
@@ -925,7 +981,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 						std.debug.print("Parsed comp segment\n", .{});
 					}
 					if (pass == 0){
-						interpret(start_ip);
+						const core = awaken_core(start_ip);
+						std.debug.assert(core != 0);
+						await_cores();
 						if (debug) {
 							std.debug.print("Exiting comp segment\n", .{});
 						}
@@ -1001,7 +1059,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				},
 				.MOVW => {
 					op = Instruction{
-						.tag=.movw,
+						.tag=.movw_i,
 						.data=.{
 							.movew=.{
 								.dest = try parse_location_or_label(mem, tokens, token_index, labels, false),
@@ -1286,7 +1344,22 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				.movew => {
 					const dest = reduce_location(&inst.data.movew.dest);
 					const src = reduce_location(&inst.data.movew.src);
-					store_u32(data, i, @intFromEnum(inst.tag));
+					var offset:u32 = 0;
+					switch (dest){
+						.immediate => {
+							offset = 0;
+						},
+						.literal => {
+							offset = 1;
+						},
+						.dereference => {
+							offset = 2;
+						},
+						.register => {
+							unreachable;
+						}
+					}
+					store_u32(data, i, @intFromEnum(inst.tag)+offset);
 					i += 4;
 					write_location(data, &i, dest);
 					write_location_64(data, &i, src);
@@ -1642,7 +1715,8 @@ pub fn val64(l: Location) RuntimeError!u64 {
 
 const Opcode = enum(u8) {
 	mov_ii=0, mov_il, mov_id,
-	mov_di, mov_dl, mov_dd, movw,
+	mov_di, mov_dl, mov_dd,
+	movw_i, movw_l, movw_d,
 	movh_ii, movh_il, movh_id,
 	movh_di, movh_dl, movh_dd,
 	movl_ii, movl_il, movl_id,
@@ -1689,13 +1763,17 @@ const Opcode = enum(u8) {
 
 const OpBytesFn = *const fn (*align(1) u64) bool;
 
-pub fn interpret(start:u64) void {
+pub fn partition_vm() void {
 	vm.words = std.mem.bytesAsSlice(u64, vm.mem[0..]);
 	vm.half_words = std.mem.bytesAsSlice(u32, vm.mem[0..]);
+}
+
+pub fn interpret(start:u64) void {
 	const ip = &vm.words[vm.ip[active_core]/8];
 	ip.* = start/8;
-	const ops: [234]OpBytesFn = .{
-		mov_ii_bytes, mov_il_bytes, mov_id_bytes, mov_di_bytes, mov_dl_bytes, mov_dd_bytes, movw_bytes,
+	const ops: [236]OpBytesFn = .{
+		mov_ii_bytes, mov_il_bytes, mov_id_bytes, mov_di_bytes, mov_dl_bytes, mov_dd_bytes,
+		movw_i_bytes, movw_l_bytes, movw_d_bytes,
 		movh_ii_bytes, movh_il_bytes, movh_id_bytes, movh_di_bytes, movh_dl_bytes, movh_dd_bytes,
 		movl_ii_bytes, movl_il_bytes, movl_id_bytes, movl_di_bytes, movl_dl_bytes, movl_dd_bytes,
 		add_iii_bytes, add_iil_bytes, add_iid_bytes, add_ili_bytes, add_ill_bytes, add_ild_bytes, add_idi_bytes, add_idl_bytes, add_idd_bytes, add_dii_bytes, add_dil_bytes, add_did_bytes, add_dli_bytes, add_dll_bytes, add_dld_bytes, add_ddi_bytes, add_ddl_bytes, add_ddd_bytes,
@@ -1723,6 +1801,7 @@ pub fn interpret(start:u64) void {
 			stdout.print("\x1b[H", .{}) catch unreachable;
 			debug_show_registers();
 			debug_show_instructions();
+			stdout.print("[core {}]\n", .{active_core}) catch unreachable;
 			var stdin = std.io.getStdIn().reader();
 			var buffer: [1]u8 = undefined;
 			_ = stdin.read(&buffer) catch unreachable;
@@ -1863,13 +1942,36 @@ pub fn mov_dd_bytes(ip: *align(1) u64) bool {
 	return true;
 }
 
-pub fn movw_bytes(ip: *align(1) u64) bool {
+pub fn movw_i_bytes(ip: *align(1) u64) bool {
+	const p = ip.*;
+	ip.* += 2;
+	const reg_chunk = vm.words[p];
+	const arg = vm.words[p+1];
+	const loc_name = reg_chunk >> 32;
+	const loc = vm.words[loc_name >> 3];
+	vm.words[loc >> 3] = arg;
+	return true;
+}
+
+pub fn movw_l_bytes(ip: *align(1) u64) bool {
 	const p = ip.*;
 	ip.* += 2;
 	const reg_chunk = vm.words[p];
 	const arg = vm.words[p+1];
 	const reg = reg_chunk >> 32;
 	vm.words[reg >> 3] = arg;
+	return true;
+}
+
+pub fn movw_d_bytes(ip: *align(1) u64) bool {
+	const p = ip.*;
+	ip.* += 2;
+	const reg_chunk = vm.words[p];
+	const arg = vm.words[p+1];
+	const loc_name = reg_chunk >> 32;
+	const loc = vm.words[loc_name >> 3];
+	const loc_deref = vm.words[loc >> 3];
+	vm.words[loc_deref >> 3] = arg;
 	return true;
 }
 
@@ -5278,6 +5380,7 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 			return true;
 		},
 		1 => {
+			sleep_core();
 			return false;
 		},
 		2 => {
@@ -5329,6 +5432,11 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 			const slice = vm.mem[addr..addr+len];
 			compile_and_load(slice, dest);
 		},
+		9 => {
+			const new_ip = vm.mem[vm.r1[active_core]];
+			const core = awaken_core(new_ip);
+			vm.words[vm.r0[active_core]>>3] = core;
+		},
 		else => {}
 	}
 	return true;
@@ -5346,6 +5454,7 @@ pub fn compile_and_load(contents: []u8, addr: u64) void {
 	}
 	var old = vm;
 	vm = VM.init();
+	partition_vm();
 	const program_len = metaprogram(&tokens, &mem, false, null);
 	if (program_len) |len| {
 		for (addr..addr+len, vm.mem[start_ip..]) |index, byte| {
@@ -5353,6 +5462,7 @@ pub fn compile_and_load(contents: []u8, addr: u64) void {
 		}
 	}
 	vm = old;
+	partition_vm();
 }
 
 pub fn reduce_location(loc: *Location) Location {
@@ -5619,8 +5729,11 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			}
 			const old_vm = vm;
 			vm = pass_vm;
+			partition_vm();
 			comp_section = true;
-			interpret(start_ip);
+			const core = awaken_core(start_ip);
+			std.debug.assert(core != 0);
+			await_cores();
 			comp_section = false;
 			const end_addr = vm.words[vm.r1[active_core]/8]/8;
 			if(debug){
@@ -5683,6 +5796,7 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 					catch unreachable;
 			}
 			vm = old_vm;
+			partition_vm();
 			new.appendSlice(translated.items)
 				catch unreachable;
 			const tmp = tokens;
@@ -5704,6 +5818,4 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	//backtrack
 	//inspect memory address
 //TODO visual code show in debug view
-//TODO multicore?
-	// multiple vms
-	// branch interrupt, if a cpu is available and waiting for instructions it puts them there, otherwise returns error code in r0
+//TODO input filename does nothing rn
