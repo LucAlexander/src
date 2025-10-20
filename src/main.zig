@@ -233,6 +233,14 @@ pub fn sleep_core() void {
 }
 
 pub fn push_builtin_constants() void {
+	var offset:u64 = 0;
+	comp_persistent.put("r0", main_size+offset) catch unreachable;
+	offset += 8;
+	comp_persistent.put("r1", main_size+offset) catch unreachable;
+	offset += 8;
+	comp_persistent.put("r2", main_size+offset) catch unreachable;
+	offset += 8;
+	comp_persistent.put("r3", main_size+offset) catch unreachable;
 	comp_persistent.put("mbm", frame_buffer) catch unreachable;
 	comp_persistent.put("fbw", frame_buffer_w) catch unreachable;
 	comp_persistent.put("fbh", frame_buffer_h) catch unreachable;
@@ -271,7 +279,15 @@ pub fn push_builtin_constants() void {
 	comp_persistent.put("SRC_UP", @intFromEnum(rl.KeyboardKey.up)) catch unreachable;
 	comp_persistent.put("SRC_DOWN", @intFromEnum(rl.KeyboardKey.down)) catch unreachable;
 	comp_persistent.put("SRC_SPACE", @intFromEnum(rl.KeyboardKey.space)) catch unreachable;
-	persistent.put("mbm", frame_buffer) catch unreachable;
+	offset = 0;
+	persistent.put("r0", main_size+offset) catch unreachable;
+	offset += 8;
+	persistent.put("r1", main_size+offset) catch unreachable;
+	offset += 8;
+	persistent.put("r2", main_size+offset) catch unreachable;
+	offset += 8;
+	persistent.put("r3", main_size+offset) catch unreachable;
+persistent.put("mbm", frame_buffer) catch unreachable;
 	persistent.put("fbw", frame_buffer_w) catch unreachable;
 	persistent.put("fbh", frame_buffer_h) catch unreachable;
 	persistent.put("mtp", main_size) catch unreachable;
@@ -547,7 +563,7 @@ const TOKEN = enum {
 	CMP, JMP,
 	JLT, JGT, JLE, JGE, JEQ, JNE,
 	INT,
-	R0, R1, R2, R3, IP,
+	IP,
 	SPACE, NEW_LINE, TAB, CONCAT,
 	LINE_END, WHITESPACE
 };
@@ -670,10 +686,6 @@ pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) P
 	token_map.put("jne", .JNE) catch unreachable;
 	token_map.put("int", .INT) catch unreachable;
 	token_map.put("ip", .IP) catch unreachable;
-	token_map.put("r0", .R0) catch unreachable;
-	token_map.put("r1", .R1) catch unreachable;
-	token_map.put("r2", .R2) catch unreachable;
-	token_map.put("r3", .R3) catch unreachable;
 	token_map.put("!", .LIT) catch unreachable;
 	token_map.put("[", .OPEN_BRACK) catch unreachable;
 	token_map.put("]", .CLOSE_BRACK) catch unreachable;
@@ -851,7 +863,6 @@ pub fn apply_whitespace(input_index: u64, tokens: []Token) u64 {
 const Location = union(enum) {
 	immediate: u64,
 	literal: u64,
-	register: TOKEN,
 	dereference: *Location
 };
 
@@ -1354,12 +1365,12 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				}
 			}
 			std.debug.assert(op != null);
-			var inst = op.?;
+			const inst = op.?;
 			const save_i = i;
 			switch (inst.data){
 				.move => {
-					const dest = reduce_location(&inst.data.move.dest);
-					const src = reduce_location(&inst.data.move.src);
+					const dest = inst.data.move.dest;
+					const src = inst.data.move.src;
 					reduce_binary_operator(@intFromEnum(inst.tag), data, &i, dest, src);
 					store_u32(data, i, 0);
 					i += 4;
@@ -1367,8 +1378,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					write_location(data, &i, src);
 				},
 				.movew => {
-					const dest = reduce_location(&inst.data.movew.dest);
-					const src = reduce_location(&inst.data.movew.src);
+					const dest = inst.data.movew.dest;
+					const src = inst.data.movew.src;
 					var offset:u32 = 0;
 					switch (dest){
 						.immediate => {
@@ -1379,9 +1390,6 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 						},
 						.dereference => {
 							offset = 2;
-						},
-						.register => {
-							unreachable;
 						}
 					}
 					store_u32(data, i, @intFromEnum(inst.tag)+offset);
@@ -1390,17 +1398,17 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					write_location_64(data, &i, src);
 				},
 				.alu => {
-					const dest = reduce_location(&inst.data.alu.dest);
-					const left = reduce_location(&inst.data.alu.left);
-					const right = reduce_location(&inst.data.alu.right);
+					const dest = inst.data.alu.dest;
+					const left = inst.data.alu.left;
+					const right = inst.data.alu.right;
 					reduce_ternary_operator(@intFromEnum(inst.tag), data, &i, dest, left, right);
 					write_location(data, &i, dest);
 					write_location(data, &i, left);
 					write_location(data, &i, right);
 				},
 				.compare => {
-					const left = reduce_location(&inst.data.compare.left);
-					const right = reduce_location(&inst.data.compare.right);
+					const left = inst.data.compare.left;
+					const right = inst.data.compare.right;
 					reduce_binary_operator_extended(@intFromEnum(inst.tag), data, &i, left, right);
 					store_u32(data, i, 0);
 					i += 4;
@@ -1408,7 +1416,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					write_location(data, &i, right);
 				},
 				.jump => {
-					const dest = reduce_location(&inst.data.jump.dest);
+					const dest = inst.data.jump.dest;
 					if (dest == .immediate){
 						store_u32(data, i, @intFromEnum(inst.tag));
 						i += 4;
@@ -1473,12 +1481,6 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 		}
 	}
 	switch (token.tag){
-		.R0, .R1, .R2, .R3, .IP => {
-			token_index.* += 1;
-			return Location{
-				.register=token.tag
-			};
-		},
 		.IDENTIFIER => {
 			token_index.* += 1;
 			return Location{
@@ -1536,12 +1538,6 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 		};
 	}
 	switch (token.tag){
-		.R0, .R1, .R2, .R3, .IP => {
-			token_index.* += 1;
-			return Location{
-				.register=token.tag
-			};
-		},
 		.IDENTIFIER => {
 			token_index.* += 1;
 			return Location{
@@ -1649,9 +1645,6 @@ pub fn show_location(loc: *const Location) void {
 		.literal => {
 			std.debug.print("!{} ", .{loc.literal});
 		},
-		.register => {
-			std.debug.print("{} ", .{loc.register});
-		},
 		.dereference => {
 			std.debug.print("[", .{});
 			show_location(loc.dereference);
@@ -1691,18 +1684,6 @@ pub fn loc64(l: Location, val: u64) void {
 		.literal => {
 			return;
 		}, 
-		.register => {
-			switch (l.register){
-				.R0 => {store_u64(vm.r0[active_core], val);},
-				.R1 => {store_u64(vm.r1[active_core], val);},
-				.R2 => {store_u64(vm.r2[active_core], val);},
-				.R3 => {store_u64(vm.r3[active_core], val);},
-				.IP => {store_u64(vm.ip[active_core], val);},
-				else => {
-					return;
-				}
-			}
-		},
 		.dereference => {
 			const inner = try val64(l.dereference.*);
 			store_u64(inner, val);
@@ -1717,18 +1698,6 @@ pub fn val64(l: Location) RuntimeError!u64 {
 		},
 		.literal => {
 			return l.literal;
-		},
-		.register => {
-			switch (l.register){
-				.R0 => {return load_u64(vm.r0[active_core]);},
-				.R1 => {return load_u64(vm.r1[active_core]);},
-				.R2 => {return load_u64(vm.r2[active_core]);},
-				.R3 => {return load_u64(vm.r3[active_core]);},
-				.IP => {return load_u64(vm.r3[active_core]);},
-				else => {
-					return RuntimeError.UnknownRegister;
-				}
-			}
 		},
 		.dereference => {
 			const inner = try val64(l.dereference.*);
@@ -5492,46 +5461,6 @@ pub fn compile_and_load(contents: []u8, addr: u64) void {
 	partition_vm();
 }
 
-pub fn reduce_location(loc: *Location) Location {
-	switch (loc.*){
-		.register => {
-			switch (loc.register){
-				.R0 => {
-					loc.* = Location{
-						.immediate = vm.r0[active_core]
-					};
-				},
-				.R1 => {
-					loc.* = Location{
-						.immediate = vm.r1[active_core]
-					};
-				},
-				.R2 => {
-					loc.* = Location{
-						.immediate = vm.r2[active_core]
-					};
-				},
-				.R3 => {
-					loc.* = Location{
-						.immediate = vm.r3[active_core]
-					};
-				},
-				.IP => {
-					loc.* = Location{
-						.immediate = vm.ip[active_core]
-					};
-				},
-				else => {unreachable;}
-			}
-		},
-		.dereference => {
-			_ = reduce_location(loc.dereference);
-		},
-		else => { }
-	}
-	return loc.*;
-}
-
 pub fn reduce_ternary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location, c: Location) void {
 	if (a == .immediate or a == .literal){
 		reduce_binary_suboperator(seed, data, i, b, c);
@@ -5676,9 +5605,6 @@ pub fn write_location_64(data: []u8, i: *u64, src: Location) void {
 		},
 		.dereference => {
 			write_location_64(data, i, src.dereference.*);
-		},
-		.register => {
-			unreachable;
 		}
 	}
 }
@@ -5695,9 +5621,6 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 		},
 		.dereference => {
 			write_location(data, i, loc.dereference.*);
-		},
-		.register => {
-			unreachable;
 		}
 	}
 }
@@ -5845,3 +5768,4 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	//backtrack
 	//inspect memory address
 //TODO visual code show in debug view
+
