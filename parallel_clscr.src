@@ -1,0 +1,88 @@
+pass
+	movw 0 !bytes
+	mov 8 r1
+	bind loop ip
+		cmp [r0] 0
+		jne next
+		add r0 r0 !8
+		bind change ip
+			cmp [r0] 0
+			jeq break
+			movw [r1] mov  add r1 r1 !8
+			movw [r1] \[   add r1 r1 !8
+			movw [r1] !r1  add r1 r1 !8
+			movw [r1] \]   add r1 r1 !8
+			movw [r1] \[   add r1 r1 !8
+			movw [r1] [r0] add r1 r1 !8
+			movw [r1] \]   add r1 r1 !8
+			add r0 r0 !8
+			jmp change
+		bind break ip
+		add r0 r0 !8
+		cmp r0 8
+		jeq exit
+		jmp loop
+		bind next ip
+		mov [r1] [r0]
+		add r0 r0 !8
+		add r1 r1 !8
+		cmp r0 8
+		jne loop
+	bind exit ip
+	mov r0 !1
+	int
+end
+
+mov r0 !9
+mov r1 two
+int
+mov r0 !9
+mov r1 three
+int
+mov r0 !9
+mov r1 four
+int
+jmp one
+
+bind worker ip
+	bind loop ip
+		cmp r2 !0
+		jne skip
+		mov r0 !0
+		int
+		bind skip ip
+		mov r0 r2
+		bind inner ip
+			cmp r0 r1
+			jge loop
+			movw [r0] !ff808080ff808080
+			add r0 r0 !8
+			jmp inner
+
+bind one ip
+	mov r1 !mbm
+	div r1 r1 !4
+	mov r2 !0
+	jmp worker
+
+bind two ip
+	mov r1 !mbm
+	div r1 r1 !4
+	mov r2 r1
+	mul r1 r1 !2
+	jmp worker
+
+bind three ip
+	mov r1 !mbm
+	div r1 r1 !4
+	mul r2 r1 !2
+	mul r1 r1 !3
+	jmp worker
+
+bind four ip
+	mov r1 !mbm
+	div r1 r1 !4
+	mul r2 r1 !3
+	mov r1 !mbm
+	jmp worker
+

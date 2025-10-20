@@ -1,0 +1,11 @@
+mov r1 !mbm
+bind loop ip
+	mov r0 !0
+	int
+	bind inner ip
+		cmp r0 r1
+		jge loop
+		movw [r0] !ff808080ff808080
+		add r0 r0 !8
+		jmp inner
+
