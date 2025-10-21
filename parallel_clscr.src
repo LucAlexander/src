@@ -1,5 +1,43 @@
+comp
+	mul r1 !6 !8
+	mul r2 r1 !2
+	mul r3 r1 !3
+	add 0  !r0 r1
+	add 8  !r1 r1
+	add 10 !r2 r1
+	add 18 !r3 r1
+	add 20 !r0 r2
+	add 28 !r1 r2
+	add 30 !r2 r2
+	add 38 !r3 r2
+	add 40 !r0 r3
+	add 48 !r1 r3
+	add 50 !r2 r3
+	add 58 !r3 r3
+	mov 60 !r0
+	mov 68 !r1
+	mov 70 !r2
+	mov 78 !r3
+run
+bind r01 0
+bind r11 8
+bind r21 10
+bind r31 18
+bind r02 20
+bind r12 28
+bind r22 30
+bind r32 38
+bind r03 40
+bind r13 48
+bind r23 50
+bind r33 58
+bind save_r0 60
+bind save_r1 68
+bind save_r2 70
+bind save_r3 78
+
 pass
-	movw 0 !bytes
+	movw 0 !literal_bytes
 	mov 8 r1
 	bind loop ip
 		cmp [r0] 0
@@ -33,6 +71,91 @@ pass
 	int
 end
 
+pass
+	mov 0 !core_agnostic
+	mov 8 r1
+	bind loop ip
+		cmp [r0] 0
+		jne next
+		add r0 r0 !8
+		mov r2 r1
+		bytes
+			bind core0 ip
+		bytes
+		bind inner ip
+			cmp r0 0
+			jeq core1
+			mov [r1] [r0]
+			add r0 r0 !8
+			mov r1 r1 !8
+			jmp inner
+		bind core1 ip
+		mov r0 r2
+		bytes
+			bind core1 ip
+			bind r0 !r01
+			bind r1 !r11
+			bind r2 !r21
+			bind r3 !r31	
+		bytes
+		bind inner ip
+			cmp r0 0
+			jeq core2
+			mov [r1] [r0]
+			add r0 r0 !8
+			mov r1 r1 !8
+			jmp inner
+		bind core2 ip
+		mov r0 r2
+		bytes
+			bind core2 ip
+			bind r0 !r02
+			bind r1 !r12
+			bind r2 !r22
+			bind r3 !r32	
+		bytes
+		bind inner ip
+			cmp r0 0
+			jeq core3
+			mov [r1] [r0]
+			add r0 r0 !8
+			mov r1 r1 !8
+			jmp inner
+		bind core3 ip
+		mov r0 r2
+		bytes
+			bind core3 ip
+			bind r0 !r03
+			bind r1 !r13
+			bind r2 !r23
+			bind r3 !r33	
+		bytes
+		bind inner ip
+			cmp r0 0
+			jeq break
+			jmp inner
+		bind break ip
+		bytes
+			bind r0 save_r0
+			bind r1 save_r1
+			bind r2 save_r2
+			bind r3 save_r3
+		bytes
+		add r0 r0 !8
+		cmp r0 !8
+		jeq exit
+		jmp loop
+		bind next ip
+		mov [r1] [r0]
+		add r0 r0 !8
+		add r1 r1 !8
+		cmp r0 8
+		jne loop
+	bind exit ip
+	mov r0 !1
+	int
+end
+
 mov r0 !9
 mov r1 two
 int
@@ -44,6 +167,7 @@ mov r1 four
 int
 jmp one
 
+core_agnostic
 bind worker ip
 	bind loop ip
 		cmp r2 !0
@@ -58,31 +182,32 @@ bind worker ip
 			movw [r0] !ff808080ff808080
 			add r0 r0 !8
 			jmp inner
+core_agnostic
 
 bind one ip
 	mov r1 !mbm
 	div r1 r1 !4
 	mov r2 !0
-	jmp worker
+	jmp core0
 
 bind two ip
 	mov r1 !mbm
 	div r1 r1 !4
 	mov r2 r1
 	mul r1 r1 !2
-	jmp worker
+	jmp core1
 
 bind three ip
 	mov r1 !mbm
 	div r1 r1 !4
 	mul r2 r1 !2
 	mul r1 r1 !3
-	jmp worker
+	jmp core2
 
 bind four ip
 	mov r1 !mbm
 	div r1 r1 !4
 	mul r2 r1 !3
 	mov r1 !mbm
-	jmp worker
+	jmp core3
 
