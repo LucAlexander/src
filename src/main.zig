@@ -552,7 +552,7 @@ const ParseError = error {
 };
 
 const TOKEN = enum {
-	BIND, COMP_START, COMP_END, PASS_START, PASS_END,
+	BIND, UNBIND, COMP_START, COMP_END, PASS_START, PASS_END,
 	OPEN_BRACK, CLOSE_BRACK,
 	USING,
 	IDENTIFIER,
@@ -579,6 +579,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	var i: u64 = 0;
 	var token_map = std.StringHashMap(TOKEN).init(mem.*);
 	token_map.put("bind", .BIND) catch unreachable;
+	token_map.put("unbind", .UNBIND) catch unreachable;
 	token_map.put("pass", .PASS_START) catch unreachable;
 	token_map.put("end", .PASS_END) catch unreachable;
 	token_map.put("using_opinion", .USING) catch unreachable;
@@ -932,6 +933,31 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				}
 				return output;
 			},
+			.UNBIND => {
+				skip_whitespace(tokens.items, token_index) catch {
+					return output;
+				};
+				const name = tokens.items[token_index.*];
+				token_index.* += 1;
+				if (name.tag != .IDENTIFIER){
+					set_error(token_index.*-1, name, "Expected name for transfer unbind, found {s}\n", .{name.text});
+					return ParseError.UnexpectedToken;
+				}
+				if (comp){
+					if (debug){
+						std.debug.print("comp persistent removed {s}\n", .{name.text});
+					}
+					_ = comp_persistent.remove(name.text);
+					_ = persistent.remove(name.text);
+				}
+				else{
+					if (debug){
+						std.debug.print("persistent removed {s}\n", .{name.text});
+					}
+					_ = persistent.remove(name.text);
+				}
+				continue;
+			},
 			.BIND => {
 				skip_whitespace(tokens.items, token_index) catch {
 					return output;
@@ -989,464 +1015,471 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!u64 {
 	try retokenize(mem, tokens);
 	var labels = std.StringHashMap(u64).init(mem.*);
-	const index_save = token_index.*;
 	var i: u64 = 0;
-	outer: for (0..2) |pass| {
-		i = 0;
-		token_index.* = index_save;
-		while (token_index.* < tokens.items.len){
-			skip_whitespace(tokens.items, token_index) catch {
-				continue :outer;
-			};
-			if (token_index.* > tokens.items.len){
-				set_error(token_index.*-1, tokens.items[tokens.items.len-1], "Expected opcode, found end of file\n", .{});
-				return ParseError.UnexpectedEOF;
-			}
-			const token = tokens.items[token_index.*];
-			token_index.* += 1;
-			var op: ?Instruction = null;
-			switch (token.tag){
-				.COMP_START => {
-					const comp_stack = comp_section;
-					comp_section = true;
-					if (debug) {
-						std.debug.print("Entering comp segment\n", .{});
-					}
-					_ = try parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], tokens, token_index, true);
-					if (debug) {
-						std.debug.print("Parsed comp segment\n", .{});
-					}
-					if (pass == 0){
-						const core = awaken_core(start_ip);
-						std.debug.assert(core != 0);
-						await_cores();
-						if (debug) {
-							std.debug.print("Exiting comp segment\n", .{});
-						}
-					}
-					comp_section = comp_stack;
+	while (token_index.* < tokens.items.len){
+		try skip_whitespace(tokens.items, token_index);
+		if (token_index.* > tokens.items.len){
+			set_error(token_index.*-1, tokens.items[tokens.items.len-1], "Expected opcode, found end of file\n", .{});
+			return ParseError.UnexpectedEOF;
+		}
+		const token = tokens.items[token_index.*];
+		token_index.* += 1;
+		var op: ?Instruction = null;
+		switch (token.tag){
+			.COMP_START => {
+				const comp_stack = comp_section;
+				comp_section = true;
+				if (debug) {
+					std.debug.print("Entering comp segment\n", .{});
+				}
+				_ = try parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], tokens, token_index, true);
+				if (debug) {
+					std.debug.print("Parsed comp segment\n", .{});
+				}
+				const core = awaken_core(start_ip);
+				std.debug.assert(core != 0);
+				await_cores();
+				if (debug) {
+					std.debug.print("Exiting comp segment\n", .{});
+				}
+				comp_section = comp_stack;
+				continue;
+			},
+			.COMP_END => {
+				if (comp == false){
 					continue;
-				},
-				.COMP_END => {
-					if (comp == false){
-						continue;
-					}
-					return i;
-				},
-				.BIND => {
-					skip_whitespace(tokens.items, token_index) catch {
-						continue :outer;
-					};
-					const name = tokens.items[token_index.*];
-					token_index.* += 1;
-					if (name.tag != .IDENTIFIER){
-						set_error(token_index.*-1, name, "Expected name for transfer bind, found {s}\n", .{name.text});
-						return ParseError.UnexpectedToken;
-					}
-					skip_whitespace(tokens.items, token_index) catch {
-						continue :outer;
-					};
-					const is_ip = tokens.items[token_index.*];
-					if (is_ip.tag == .IP){
-						token_index.* += 1;
-						if (pass == 0){
-							labels.put(name.text, (i/8)+(start_ip/8))
-								catch unreachable;
-						}
-						continue;
-					}
-					const comp_stack = comp_section;
-					comp_section = true;
-					const loc = try parse_location(mem, tokens, token_index);
-					comp_section = comp_stack;
-					const val = val64(loc) catch {
-						return ParseError.UnexpectedToken;
-					};
-					if (pass == 0){
-						if (comp){
-							if (debug){
-								std.debug.print("comp persistent put {s} : {}\n", .{name.text, val});
-							}
-							comp_persistent.put(name.text, val)
-								catch unreachable;
-							persistent.put(name.text, val)
-								catch unreachable;
-						}
-						else{
-							if (debug){
-								std.debug.print("persistent put {s} : {}\n", .{name.text, val});
-							}
-							persistent.put(name.text, val)
-								catch unreachable;
-						}
-					}
-					continue;
-				},
-				.MOV => {
-					op = Instruction{
-						.tag=.mov_ii,
-						.data=.{
-							.move=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.MOVW => {
-					op = Instruction{
-						.tag=.movw_i,
-						.data=.{
-							.movew=.{
-								.dest = try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.src = try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.MOVH => {
-					op = Instruction {
-						.tag=.movh_ii,
-						.data=.{
-							.move=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.MOVL => {
-					op = Instruction {
-						.tag=.movl_ii,
-						.data=.{
-							.move=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.ADD => {
-					op = Instruction{
-						.tag=.add_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.SUB => {
-					op = Instruction{
-						.tag=.sub_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.MUL => {
-					op = Instruction{
-						.tag=.mul_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.DIV => {
-					op = Instruction{
-						.tag=.div_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.MOD => {
-					op = Instruction{
-						.tag=.mod_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.AND => {
-					op = Instruction{
-						.tag=.and_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.XOR => {
-					op = Instruction{
-						.tag=.xor_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.OR => {
-					op = Instruction{
-						.tag=.or_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.SHL => {
-					op = Instruction{
-						.tag=.shl_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.SHR => {
-					op = Instruction{
-						.tag=.shr_iii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.NOT => {
-					op = Instruction{
-						.tag=.not_ii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=Location{.literal=0}
-							}
-						}
-					};
-				},
-				.COM => {
-					op = Instruction{
-						.tag=.com_ii,
-						.data=.{
-							.alu=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=Location{.literal=0}
-							}
-						}
-					};
-				},
-				.CMP => {
-					op = Instruction{
-						.tag=.cmp_ii,
-						.data=.{
-							.compare=.{
-								.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-								.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.JMP => {
-					op = Instruction{
-						.tag=.jmp_i,
-						.data=.{
-							.jump=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.JNE => {
-					op = Instruction{
-						.tag=.jne_i,
-						.data=.{
-							.jump=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.JEQ => {
-					op = Instruction{
-						.tag=.jeq_i,
-						.data=.{
-							.jump=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.JLE => {
-					op = Instruction{
-						.tag=.jle_i,
-						.data=.{
-							.jump=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.JLT => {
-					op = Instruction{
-						.tag=.jlt_i,
-						.data=.{
-							.jump=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.JGE => {
-					op = Instruction{
-						.tag=.jge_i,
-						.data=.{
-							.jump=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.JGT => {
-					op = Instruction{
-						.tag=.jgt_i,
-						.data=.{
-							.jump=.{
-								.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
-							}
-						}
-					};
-				},
-				.INT => {
-					op = Instruction{
-						.tag=.int_,
-						.data=.{
-							.interrupt={}
-						}
-					};
-				},
-				else => {
-					set_error(token_index.*-1, token, "Expected opcode, found {s}\n", .{token.text});
+				}
+				return i;
+			},
+			.UNBIND => {
+				try skip_whitespace(tokens.items, token_index);
+				const name = tokens.items[token_index.*];
+				token_index.* += 1;
+				if (name.tag != .IDENTIFIER){
+					set_error(token_index.*-1, name, "Expected name for transfer unbind, found {s}\n", .{name.text});
 					return ParseError.UnexpectedToken;
 				}
-			}
-			std.debug.assert(op != null);
-			const inst = op.?;
-			const save_i = i;
-			switch (inst.data){
-				.move => {
-					const dest = inst.data.move.dest;
-					const src = inst.data.move.src;
-					reduce_binary_operator(@intFromEnum(inst.tag), data, &i, dest, src);
-					store_u32(data, i, 0);
-					i += 4;
-					write_location(data, &i, dest);
-					write_location(data, &i, src);
-				},
-				.movew => {
-					const dest = inst.data.movew.dest;
-					const src = inst.data.movew.src;
-					var offset:u32 = 0;
-					switch (dest){
-						.immediate => {
-							offset = 0;
-						},
-						.literal => {
-							offset = 1;
-						},
-						.dereference => {
-							offset = 2;
+				_ = labels.remove(name.text);
+				if (comp){
+					if (debug){
+						std.debug.print("comp persistent removed {s}\n", .{name.text});
+					}
+					_ = comp_persistent.remove(name.text);
+					_ = persistent.remove(name.text);
+				}
+				else{
+					if (debug){
+						std.debug.print("persistent removed {s}\n", .{name.text});
+					}
+					_ = persistent.remove(name.text);
+				}
+				continue;
+			},
+			.BIND => {
+				try skip_whitespace(tokens.items, token_index);
+				const name = tokens.items[token_index.*];
+				token_index.* += 1;
+				if (name.tag != .IDENTIFIER){
+					set_error(token_index.*-1, name, "Expected name for transfer bind, found {s}\n", .{name.text});
+					return ParseError.UnexpectedToken;
+				}
+				try skip_whitespace(tokens.items, token_index);
+				const is_ip = tokens.items[token_index.*];
+				if (is_ip.tag == .IP){
+					token_index.* += 1;
+					labels.put(name.text, (i/8)+(start_ip/8))
+						catch unreachable;
+					continue;
+				}
+				const comp_stack = comp_section;
+				comp_section = true;
+				const loc = try parse_location(mem, tokens, token_index);
+				comp_section = comp_stack;
+				const val = val64(loc) catch {
+					return ParseError.UnexpectedToken;
+				};
+				if (comp){
+					if (debug){
+						std.debug.print("comp persistent put {s} : {}\n", .{name.text, val});
+					}
+					comp_persistent.put(name.text, val)
+						catch unreachable;
+					persistent.put(name.text, val)
+						catch unreachable;
+				}
+				else{
+					if (debug){
+						std.debug.print("persistent put {s} : {}\n", .{name.text, val});
+					}
+					persistent.put(name.text, val)
+						catch unreachable;
+				}
+				continue;
+			},
+			.MOV => {
+				op = Instruction{
+					.tag=.mov_ii,
+					.data=.{
+						.move=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
 						}
 					}
-					store_u32(data, i, @intFromEnum(inst.tag)+offset);
-					i += 4;
-					write_location(data, &i, dest);
-					write_location_64(data, &i, src);
-				},
-				.alu => {
-					const dest = inst.data.alu.dest;
-					const left = inst.data.alu.left;
-					const right = inst.data.alu.right;
-					reduce_ternary_operator(@intFromEnum(inst.tag), data, &i, dest, left, right);
-					write_location(data, &i, dest);
-					write_location(data, &i, left);
-					write_location(data, &i, right);
-				},
-				.compare => {
-					const left = inst.data.compare.left;
-					const right = inst.data.compare.right;
-					reduce_binary_operator_extended(@intFromEnum(inst.tag), data, &i, left, right);
-					store_u32(data, i, 0);
-					i += 4;
-					write_location(data, &i, left);
-					write_location(data, &i, right);
-				},
-				.jump => {
-					const dest = inst.data.jump.dest;
-					if (dest == .immediate){
-						store_u32(data, i, @intFromEnum(inst.tag));
-						i += 4;
+				};
+			},
+			.MOVW => {
+				op = Instruction{
+					.tag=.movw_i,
+					.data=.{
+						.movew=.{
+							.dest = try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.src = try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
 					}
-					else if (dest == .literal){
-						store_u32(data, i, @intFromEnum(inst.tag)+1);
-						i += 4;
+				};
+			},
+			.MOVH => {
+				op = Instruction {
+					.tag=.movh_ii,
+					.data=.{
+						.move=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
 					}
-					else if (dest == .dereference){
-						store_u32(data, i, @intFromEnum(inst.tag)+2);
-						i += 4;
+				};
+			},
+			.MOVL => {
+				op = Instruction {
+					.tag=.movl_ii,
+					.data=.{
+						.move=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
 					}
-					store_u32(data, i, 0);
-					i += 4;
-					store_u32(data, i, 0);
-					i += 4;
-					write_location(data, &i, dest);
-				},
-				.interrupt => {
+				};
+			},
+			.ADD => {
+				op = Instruction{
+					.tag=.add_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.SUB => {
+				op = Instruction{
+					.tag=.sub_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.MUL => {
+				op = Instruction{
+					.tag=.mul_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.DIV => {
+				op = Instruction{
+					.tag=.div_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.MOD => {
+				op = Instruction{
+					.tag=.mod_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.AND => {
+				op = Instruction{
+					.tag=.and_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.XOR => {
+				op = Instruction{
+					.tag=.xor_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.OR => {
+				op = Instruction{
+					.tag=.or_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.SHL => {
+				op = Instruction{
+					.tag=.shl_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.SHR => {
+				op = Instruction{
+					.tag=.shr_iii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.NOT => {
+				op = Instruction{
+					.tag=.not_ii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=Location{.literal=0}
+						}
+					}
+				};
+			},
+			.COM => {
+				op = Instruction{
+					.tag=.com_ii,
+					.data=.{
+						.alu=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=Location{.literal=0}
+						}
+					}
+				};
+			},
+			.CMP => {
+				op = Instruction{
+					.tag=.cmp_ii,
+					.data=.{
+						.compare=.{
+							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.JMP => {
+				op = Instruction{
+					.tag=.jmp_i,
+					.data=.{
+						.jump=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.JNE => {
+				op = Instruction{
+					.tag=.jne_i,
+					.data=.{
+						.jump=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.JEQ => {
+				op = Instruction{
+					.tag=.jeq_i,
+					.data=.{
+						.jump=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.JLE => {
+				op = Instruction{
+					.tag=.jle_i,
+					.data=.{
+						.jump=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.JLT => {
+				op = Instruction{
+					.tag=.jlt_i,
+					.data=.{
+						.jump=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.JGE => {
+				op = Instruction{
+					.tag=.jge_i,
+					.data=.{
+						.jump=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.JGT => {
+				op = Instruction{
+					.tag=.jgt_i,
+					.data=.{
+						.jump=.{
+							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+						}
+					}
+				};
+			},
+			.INT => {
+				op = Instruction{
+					.tag=.int_,
+					.data=.{
+						.interrupt={}
+					}
+				};
+			},
+			else => {
+				set_error(token_index.*-1, token, "Expected opcode, found {s}\n", .{token.text});
+				return ParseError.UnexpectedToken;
+			}
+		}
+		std.debug.assert(op != null);
+		const inst = op.?;
+		const save_i = i;
+		switch (inst.data){
+			.move => {
+				const dest = inst.data.move.dest;
+				const src = inst.data.move.src;
+				reduce_binary_operator(@intFromEnum(inst.tag), data, &i, dest, src);
+				store_u32(data, i, 0);
+				i += 4;
+				write_location(data, &i, dest);
+				write_location(data, &i, src);
+			},
+			.movew => {
+				const dest = inst.data.movew.dest;
+				const src = inst.data.movew.src;
+				var offset:u32 = 0;
+				switch (dest){
+					.immediate => {
+						offset = 0;
+					},
+					.literal => {
+						offset = 1;
+					},
+					.dereference => {
+						offset = 2;
+					}
+				}
+				store_u32(data, i, @intFromEnum(inst.tag)+offset);
+				i += 4;
+				write_location(data, &i, dest);
+				write_location_64(data, &i, src);
+			},
+			.alu => {
+				const dest = inst.data.alu.dest;
+				const left = inst.data.alu.left;
+				const right = inst.data.alu.right;
+				reduce_ternary_operator(@intFromEnum(inst.tag), data, &i, dest, left, right);
+				write_location(data, &i, dest);
+				write_location(data, &i, left);
+				write_location(data, &i, right);
+			},
+			.compare => {
+				const left = inst.data.compare.left;
+				const right = inst.data.compare.right;
+				reduce_binary_operator_extended(@intFromEnum(inst.tag), data, &i, left, right);
+				store_u32(data, i, 0);
+				i += 4;
+				write_location(data, &i, left);
+				write_location(data, &i, right);
+			},
+			.jump => {
+				const dest = inst.data.jump.dest;
+				if (dest == .immediate){
 					store_u32(data, i, @intFromEnum(inst.tag));
-					i += 16;
+					i += 4;
 				}
-			}
-			if (debug){
-				std.debug.print("{} : ", .{save_i+start_ip});
-				for (save_i..i) |byte_index| {
-					std.debug.print("{x:02} ", .{data[byte_index]});
+				else if (dest == .literal){
+					store_u32(data, i, @intFromEnum(inst.tag)+1);
+					i += 4;
 				}
-				std.debug.print("\n", .{});
+				else if (dest == .dereference){
+					store_u32(data, i, @intFromEnum(inst.tag)+2);
+					i += 4;
+				}
+				store_u32(data, i, 0);
+				i += 4;
+				store_u32(data, i, 0);
+				i += 4;
+				write_location(data, &i, dest);
+			},
+			.interrupt => {
+				store_u32(data, i, @intFromEnum(inst.tag));
+				i += 16;
 			}
+		}
+		if (debug){
+			std.debug.print("{} : ", .{save_i+start_ip});
+			for (save_i..i) |byte_index| {
+				std.debug.print("{x:02} ", .{data[byte_index]});
+			}
+			std.debug.print("\n", .{});
 		}
 	}
 	return i;
@@ -1794,8 +1827,8 @@ pub fn interpret(start:u64) void {
 		if ((!comp_section and debug) or (comp_section and debug_comp)){
 			const stdout = std.io.getStdOut().writer();
 			stdout.print("\x1b[2J\x1b[H", .{}) catch unreachable;
-			debug_show_instruction_ref_path(vm.words[vm.ip[active_core]/8]);
-			debug_show_instruction_ref_path(vm.words[vm.ip[active_core]/8]-2);
+			//debug_show_instruction_ref_path(vm.words[vm.ip[active_core]/8]);
+			//debug_show_instruction_ref_path(vm.words[vm.ip[active_core]/8]-2);
 			stdout.print("\x1b[H", .{}) catch unreachable;
 			debug_show_registers();
 			debug_show_instructions();
@@ -5655,6 +5688,7 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 				}
 				token_index += 1;
 			}
+			iden_hashes.clearRetainingCapacity();
 			var index:u64 = 0;
 			var slice = Buffer(Token).init(mem.*);
 			slice.appendSlice(tokens.items[start..end])
