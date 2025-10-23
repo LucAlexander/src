@@ -862,6 +862,7 @@ pub fn apply_whitespace(input_index: u64, tokens: []Token) u64 {
 }
 
 const Location = union(enum) {
+	pending: Token,
 	immediate: u64,
 	literal: u64,
 	dereference: *Location
@@ -1012,9 +1013,25 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 	return output;
 }
 
+const LabelChain = union(enum){
+	fulfilled: struct {
+		name: Token,
+		value: u64,
+	},
+	pending: struct {
+		name: Token,
+		location: u64,
+		width: u8,
+		next: ?*LabelChain
+	}
+};
+
 pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!u64 {
 	try retokenize(mem, tokens);
 	var labels = std.StringHashMap(u64).init(mem.*);
+	defer labels.deinit();
+	var chain = std.StringHashMap(LabelChain).init(mem.*);
+	defer chain.deinit();
 	var i: u64 = 0;
 	while (token_index.* < tokens.items.len){
 		try skip_whitespace(tokens.items, token_index);
@@ -1060,6 +1077,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					return ParseError.UnexpectedToken;
 				}
 				_ = labels.remove(name.text);
+				_ = chain.remove(name.text);
 				if (comp){
 					if (debug){
 						std.debug.print("comp persistent removed {s}\n", .{name.text});
@@ -1089,6 +1107,45 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					token_index.* += 1;
 					labels.put(name.text, (i/8)+(start_ip/8))
 						catch unreachable;
+					if (chain.get(name.text)) |*link| {
+						switch (link.*){
+							.fulfilled => { },
+							.pending => {
+								if (link.pending.width == 8){
+									const bytes: [8]u8 = @bitCast((i/8)+(start_ip/8));
+									@memcpy(data[link.pending.location..link.pending.location+8], &bytes);
+								}
+								else if (link.pending.width == 4){
+									store_u32(data, link.pending.location, @truncate((i/8)+(start_ip/8)));
+								}
+								var ptr = link.pending.next;
+								while (ptr) |worker| {
+									if (worker.pending.width == 8){
+										const bytes: [8]u8 = @bitCast((i/8)+(start_ip/8));
+										@memcpy(data[worker.pending.location..worker.pending.location+8], &bytes);
+									}
+									else if (worker.pending.width == 4){
+										store_u32(data, worker.pending.location, @truncate((i/8)+(start_ip/8)));
+									}
+									ptr = worker.pending.next;
+								}
+								chain.put(name.text, LabelChain{
+									.fulfilled=.{
+										.name=name,
+										.value=(i/8)+(start_ip/8)
+									}
+								}) catch unreachable;
+							}
+						}
+					}
+					else{
+						chain.put(name.text, LabelChain{
+							.fulfilled=.{
+								.name=name,
+								.value=(i/8)+(start_ip/8)
+							}
+						}) catch unreachable;
+					}
 					continue;
 				}
 				const comp_stack = comp_section;
@@ -1408,14 +1465,17 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				reduce_binary_operator(@intFromEnum(inst.tag), data, &i, dest, src);
 				store_u32(data, i, 0);
 				i += 4;
-				write_location(data, &i, dest);
-				write_location(data, &i, src);
+				write_location(mem, data, &i, dest, &chain);
+				write_location(mem, data, &i, src, &chain);
 			},
 			.movew => {
 				const dest = inst.data.movew.dest;
 				const src = inst.data.movew.src;
 				var offset:u32 = 0;
 				switch (dest){
+					.pending => {
+						offset = 0;
+					},
 					.immediate => {
 						offset = 0;
 					},
@@ -1428,17 +1488,17 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				}
 				store_u32(data, i, @intFromEnum(inst.tag)+offset);
 				i += 4;
-				write_location(data, &i, dest);
-				write_location_64(data, &i, src);
+				write_location(mem, data, &i, dest, &chain);
+				write_location_64(mem, data, &i, src, &chain);
 			},
 			.alu => {
 				const dest = inst.data.alu.dest;
 				const left = inst.data.alu.left;
 				const right = inst.data.alu.right;
 				reduce_ternary_operator(@intFromEnum(inst.tag), data, &i, dest, left, right);
-				write_location(data, &i, dest);
-				write_location(data, &i, left);
-				write_location(data, &i, right);
+				write_location(mem, data, &i, dest, &chain);
+				write_location(mem, data, &i, left, &chain);
+				write_location(mem, data, &i, right, &chain);
 			},
 			.compare => {
 				const left = inst.data.compare.left;
@@ -1446,8 +1506,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				reduce_binary_operator_extended(@intFromEnum(inst.tag), data, &i, left, right);
 				store_u32(data, i, 0);
 				i += 4;
-				write_location(data, &i, left);
-				write_location(data, &i, right);
+				write_location(mem, data, &i, left, &chain);
+				write_location(mem, data, &i, right, &chain);
 			},
 			.jump => {
 				const dest = inst.data.jump.dest;
@@ -1467,7 +1527,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				i += 4;
 				store_u32(data, i, 0);
 				i += 4;
-				write_location(data, &i, dest);
+				write_location(mem, data, &i, dest, &chain);
 			},
 			.interrupt => {
 				store_u32(data, i, @intFromEnum(inst.tag));
@@ -1517,7 +1577,7 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 		.IDENTIFIER => {
 			token_index.* += 1;
 			return Location{
-				.immediate = hash_global_enum(token)
+				.pending=token
 			};
 		},
 		.LIT => {
@@ -1726,6 +1786,9 @@ pub fn loc64(l: Location, val: u64) void {
 
 pub fn val64(l: Location) RuntimeError!u64 {
 	switch (l){
+		.pending => {
+			unreachable;
+		},
 		.immediate => {
 			return load_u64(l.immediate);
 		},
@@ -5624,8 +5687,50 @@ pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Loc
 	}
 }
 
-pub fn write_location_64(data: []u8, i: *u64, src: Location) void {
+pub fn write_location_64(mem: *const std.mem.Allocator, data: []u8, i: *u64, src: Location, chain: *std.StringHashMap(LabelChain)) void {
 	switch (src){
+		.pending => {
+			if (chain.get(src.pending.text)) |*link| {
+				switch(link.*){
+					.fulfilled => {
+						const bytes: [8]u8 = @bitCast(link.fulfilled.value);
+						@memcpy(data[i.*..i.*+8], &bytes);
+						i.* += 8;
+						return;
+					},
+					.pending => {
+						var ptr = link.*;
+						const next = link.pending.next;
+						const insert = LabelChain{
+							.pending=.{
+								.name=src.pending,
+								.location=i.*,
+								.width=8,
+								.next = next
+							}
+						};
+						ptr.pending.next = mem.create(LabelChain)
+							catch unreachable;
+						ptr.pending.next.?.* = insert;
+						chain.put(src.pending.text, ptr)
+							catch unreachable;
+					}
+				}
+			}
+			else{
+				chain.put(src.pending.text, LabelChain{
+					.pending=.{
+						.name=src.pending,
+						.location=i.*,
+						.width=8,
+						.next = null
+					}
+				}) catch unreachable;
+			}
+			const bytes: [8]u8 = @bitCast(hash_global_enum(src.pending));
+			@memcpy(data[i.*..i.*+8], &bytes);
+			i.* += 8;
+		},
 		.immediate => {
 			const bytes: [8]u8 = @bitCast(src.immediate);
 			@memcpy(data[i.*..i.*+8], &bytes);
@@ -5637,13 +5742,53 @@ pub fn write_location_64(data: []u8, i: *u64, src: Location) void {
 			i.* += 8;
 		},
 		.dereference => {
-			write_location_64(data, i, src.dereference.*);
+			write_location_64(mem, data, i, src.dereference.*, chain);
 		}
 	}
 }
 
-pub fn write_location(data: []u8, i: *u64, loc: Location) void {
+pub fn write_location(mem: *const std.mem.Allocator, data: []u8, i: *u64, loc: Location, chain: *std.StringHashMap(LabelChain)) void {
 	switch(loc){
+		.pending => {
+			if (chain.get(loc.pending.text)) |*link| {
+				switch(link.*){
+					.fulfilled => {
+						store_u32(data, i.*, @truncate(link.fulfilled.value));
+						i.* += 4;
+						return;
+					},
+					.pending => {
+						var ptr = link.*;
+						const next = link.pending.next;
+						const insert = LabelChain{
+							.pending=.{
+								.name=loc.pending,
+								.location=i.*,
+								.width=4,
+								.next = next
+							}
+						};
+						ptr.pending.next = mem.create(LabelChain)
+							catch unreachable;
+						ptr.pending.next.?.* = insert;
+						chain.put(loc.pending.text, ptr)
+							catch unreachable;
+					}
+				}
+			}
+			else{
+				chain.put(loc.pending.text, LabelChain{
+					.pending=.{
+						.name=loc.pending,
+						.location=i.*,
+						.width=4,
+						.next = null
+					}
+				}) catch unreachable;
+			}
+			store_u32(data, i.*, @truncate(hash_global_enum(loc.pending)));
+			i.* += 4;
+		},
 		.immediate => {
 			store_u32(data, i.*, @truncate(loc.immediate));
 			i.* += 4;
@@ -5653,7 +5798,7 @@ pub fn write_location(data: []u8, i: *u64, loc: Location) void {
 			i.* += 4;
 		},
 		.dereference => {
-			write_location(data, i, loc.dereference.*);
+			write_location(mem, data, i, loc.dereference.*, chain);
 		}
 	}
 }
