@@ -221,8 +221,7 @@ pub fn file_networking_startup(mem: *const std.mem.Allocator) []u8 {
 			exists = false;
 		};
 	}
-	const file = dir.createFile(slice, .{}) catch unreachable;
-	defer file.close();
+	dir.makeDir(slice) catch {};
 	return slice;
 }
 
@@ -231,7 +230,7 @@ pub fn file_networking_cleanup(name: []u8) void {
 	cwd.makeDir("machines") catch {};
 	var dir = cwd.openDir("machines", .{.iterate=true}) catch unreachable;
 	defer dir.close();
-	dir.deleteFile(name) catch {};
+	dir.deleteDir(name) catch {};
 }
 
 pub fn core_worker(index: u64) void {
@@ -5579,8 +5578,45 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 			const address = vm.words[vm.r1[active_core]>>3];
 			const ptr = vm.words[vm.r2[active_core]>>3];
 			const len = vm.words[vm.r3[active_core]>>3];
-			//TODO
-			std.debug.print("stub for direct packet sending {} {} {}\n", .{address, ptr, len});
+			const cwd = std.fs.cwd();
+			cwd.makeDir("machines") catch {};
+			var dir = cwd.openDir("machines", .{.iterate=true}) catch unreachable;
+			defer dir.close();
+			var it = dir.iterate();
+			while (it.next() catch unreachable) |entry| {
+				switch (entry.kind){
+					.directory => {
+						const candidate = std.fmt.parseInt(u64, entry.name, 16) catch unreachable;
+						if (candidate != address){
+							continue;
+						}
+						var target = dir.openDir(entry.name, .{.iterate=true}) catch unreachable;
+						defer target.close();
+						var id: u64 = undefined;
+						std.crypto.random.bytes(std.mem.asBytes(&id));
+						const mem = std.heap.page_allocator;
+						const name: []u8 = mem.alloc(u8, 16) catch unreachable;
+						var slice = std.fmt.bufPrint(name, "{x}", .{id}) catch unreachable;
+						var exists = true;
+						cwd.access(slice, .{}) catch {
+							exists = false;
+						};
+						while (exists){
+							std.crypto.random.bytes(std.mem.asBytes(&id));
+							slice = std.fmt.bufPrint(name, "{x}", .{id}) catch unreachable;
+							cwd.access(slice, .{}) catch {
+								exists = false;
+							};
+						}
+						var packet = target.createFile(slice, .{.truncate=true}) catch unreachable;
+						defer packet.close();
+						packet.writeAll(vm.mem[ptr..ptr+len]) catch unreachable;
+						break;
+					},
+					.file => {},
+					else => {}
+				}
+			}
 		},
 		11 => {
 			const cwd = std.fs.cwd();
@@ -5592,12 +5628,12 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 			var address = vm.words[vm.r1[active_core] >> 3] >> 3;
 			while (it.next() catch unreachable) |entry| {
 				switch (entry.kind){
-					.file => {
+					.directory => {
 						vm.words[address] = std.fmt.parseInt(u64, entry.name, 16) catch unreachable;
 						address += 1;
 						count += 1;
 					},
-					.directory => {},
+					.file => {},
 					else => {}
 				}
 			}
