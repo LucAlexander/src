@@ -1,0 +1,10 @@
+movw 0 !DEADBEEFFACECAFE
+mov r0 !a
+movw r1 !b87236afa6d70f0a
+mov r2 !0
+mov r3 !8
+int
+
+
+mov r0 !1
+int
