@@ -5579,10 +5579,29 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 			const address = vm.words[vm.r1[active_core]>>3];
 			const ptr = vm.words[vm.r2[active_core]>>3];
 			const len = vm.words[vm.r3[active_core]>>3];
+			//TODO
 			std.debug.print("stub for direct packet sending {} {} {}\n", .{address, ptr, len});
 		},
 		11 => {
-			std.debug.print("stub for seeing whos in the same 'server'\n", .{});
+			const cwd = std.fs.cwd();
+			cwd.makeDir("machines") catch {};
+			var dir = cwd.openDir("machines", .{.iterate=true}) catch unreachable;
+			defer dir.close();
+			var it = dir.iterate();
+			var count:u64 = 0;
+			var address = vm.words[vm.r1[active_core] >> 3] >> 3;
+			while (it.next() catch unreachable) |entry| {
+				switch (entry.kind){
+					.file => {
+						vm.words[address] = std.fmt.parseInt(u64, entry.name, 16) catch unreachable;
+						address += 1;
+						count += 1;
+					},
+					.directory => {},
+					else => {}
+				}
+			}
+			vm.words[vm.r2[active_core] >> 3] = count;
 		},
 		else => { }
 	}

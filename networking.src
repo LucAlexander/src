@@ -1,0 +1,6 @@
+mov r0 !b
+mov r1 !200
+int
+jmp !3f
+mov r0 !1
+int
