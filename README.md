@@ -139,6 +139,15 @@ r3 <- address to write compiled program
 r0: 9
 r1: instruction pointer for new core to start at
 r0 <- core running, 0 for no core available
+
+r0: a
+r1: file network address word
+r2: packet start address
+r3: packet length (bytes)
+
+r0: b
+r1: address to dump network addresses
+r2 <- number of addresses found
 ```
 
 ## Builtin Symbols
