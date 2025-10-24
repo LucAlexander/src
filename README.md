@@ -1,6 +1,10 @@
 # Src
 
-Check the included src files in the repository for examples, these docs are minimal and will improve as the spec solidifies.
+Check the included src files in the repository for examples, some of them are older as the system has gone through a few phases of iteration. These docs are minimal and will improve as the spec solidifies.
+
+Source is a metacomputation tool. It can serve as a standalone virtual computer, but can be used as a plugin manager for basically any base language. You define syntactic mutations to your file in a well defined language of computation close to how real computation happens on real machines, and can then define semantic state for those syntactic constructs in the same language. A runtime language exists alonside the compile time system, of course also in the same language. True unbounded freedom, allowing absolute precision. Ever want assembly with a proof engine tacked on? Now you can make it. 
+
+You can run multiple instances of source computers in the same directory and have them communicate over an emulated network via file io.
 
 ## Passes
 
@@ -44,7 +48,7 @@ Comptime handles the semantic side of metaprogramming. It gives you a compile ti
 ```
 comp
     anything here runs at comptile time
-    move r0 !1
+    mov r0 !1
     int
 run
 ```
@@ -57,9 +61,13 @@ comp
     int
 run
 
-bind 0 hi_byte = r1
+bind  hi_byte = r1
 ```
 binds `hi_byte` to the constant stored in r1 on the comptime vm: `FF`.
+```
+unbind hi_byte
+```
+releases the binding.
 
 ## ISA
 
@@ -144,6 +152,7 @@ r0: a
 r1: file network address word
 r2: packet start address
 r3: packet length (bytes)
+send message to another src computer
 
 r0: b
 r1: address to dump network addresses
