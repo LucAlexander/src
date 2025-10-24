@@ -187,7 +187,9 @@ pub fn main() !void {
 			threads[thread_index] = std.Thread.spawn(.{}, core_worker, .{thread_index}) catch unreachable;
 			thread_index += 1;
 		}
+		const ip_addr = file_networking_startup(&allocator);
 		compile(name, output_filename, expansion_filename, run);
+		file_networking_cleanup(ip_addr);
 		thread_index = 0;
 		while (thread_index < threads.len){
 			threads[thread_index].join();
@@ -197,6 +199,39 @@ pub fn main() !void {
 	else{
 		std.debug.print("Provide head filename\n", .{});
 	}
+}
+
+pub fn file_networking_startup(mem: *const std.mem.Allocator) []u8 {
+	const cwd = std.fs.cwd();
+	cwd.makeDir("machines") catch {};
+	var dir = cwd.openDir("machines", .{.iterate=true}) catch unreachable;
+	defer dir.close();
+	var id: u64 = undefined;
+	std.crypto.random.bytes(std.mem.asBytes(&id));
+	const name: []u8 = mem.alloc(u8, 16) catch unreachable;
+	var slice = std.fmt.bufPrint(name, "{x}", .{id}) catch unreachable;
+	var exists = true;
+	cwd.access(slice, .{}) catch {
+		exists = false;
+	};
+	while (exists){
+		std.crypto.random.bytes(std.mem.asBytes(&id));
+		slice = std.fmt.bufPrint(name, "{x}", .{id}) catch unreachable;
+		cwd.access(slice, .{}) catch {
+			exists = false;
+		};
+	}
+	const file = dir.createFile(slice, .{}) catch unreachable;
+	defer file.close();
+	return slice;
+}
+
+pub fn file_networking_cleanup(name: []u8) void {
+	const cwd = std.fs.cwd();
+	cwd.makeDir("machines") catch {};
+	var dir = cwd.openDir("machines", .{.iterate=true}) catch unreachable;
+	defer dir.close();
+	dir.deleteFile(name) catch {};
 }
 
 pub fn core_worker(index: u64) void {
@@ -5540,7 +5575,16 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 			const core = awaken_core(new_ip*8);
 			vm.words[vm.r0[active_core]>>3] = core;
 		},
-		else => {}
+		10 => {
+			const address = vm.words[vm.r1[active_core]>>3];
+			const ptr = vm.words[vm.r2[active_core]>>3];
+			const len = vm.words[vm.r3[active_core]>>3];
+			std.debug.print("stub for direct packet sending {} {} {}\n", .{address, ptr, len});
+		},
+		11 => {
+			std.debug.print("stub for seeing whos in the same 'server'\n", .{});
+		},
+		else => { }
 	}
 	return true;
 }
