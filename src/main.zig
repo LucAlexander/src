@@ -865,6 +865,7 @@ const Location = union(enum) {
 	pending: Token,
 	immediate: u64,
 	literal: u64,
+	literal_pending: Token,
 	dereference: *Location
 };
 
@@ -1034,7 +1035,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 	defer chain.deinit();
 	var i: u64 = 0;
 	while (token_index.* < tokens.items.len){
-		try skip_whitespace(tokens.items, token_index);
+		skip_whitespace(tokens.items, token_index) catch {
+			return i;
+		};
 		if (token_index.* > tokens.items.len){
 			set_error(token_index.*-1, tokens.items[tokens.items.len-1], "Expected opcode, found end of file\n", .{});
 			return ParseError.UnexpectedEOF;
@@ -1479,6 +1482,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.immediate => {
 						offset = 0;
 					},
+					.literal_pending => {
+						offset = 1;
+					},
 					.literal => {
 						offset = 1;
 					},
@@ -1511,11 +1517,11 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 			},
 			.jump => {
 				const dest = inst.data.jump.dest;
-				if (dest == .immediate){
+				if (dest == .immediate or dest == .pending){
 					store_u32(data, i, @intFromEnum(inst.tag));
 					i += 4;
 				}
-				else if (dest == .literal){
+				else if (dest == .literal or dest == .literal_pending){
 					store_u32(data, i, @intFromEnum(inst.tag)+1);
 					i += 4;
 				}
@@ -1591,14 +1597,14 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 			if (token.tag != .IDENTIFIER) {
 				if (token.tag == .WHITESPACE or token.tag == .LINE_END){
 					return Location {
-						.literal = hash_global_enum(token)
+						.literal_pending = token
 					};
 				}
 				set_error(token_index.*-1, token, "Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
 				return ParseError.UnexpectedToken;
 			}
 			return Location{
-				.literal = hash_global_enum(token)
+				.literal_pending = token
 			};
 		},
 		else => {
@@ -1732,8 +1738,14 @@ pub fn show_location(loc: *const Location) void {
 		return;
 	}
 	switch (loc.*){
+		.pending => {
+			std.debug.print("{s} ", .{loc.pending.text});
+		},
 		.immediate => {
 			std.debug.print("{} ", .{loc.immediate});
+		},
+		.literal_pending => {
+			std.debug.print("{s} ", .{loc.literal_pending.text});
 		},
 		.literal => {
 			std.debug.print("!{} ", .{loc.literal});
@@ -1771,8 +1783,14 @@ pub fn store_u64(addr: u64, val: u64) void {
 
 pub fn loc64(l: Location, val: u64) void {
 	switch (l){
+		.pending => {
+			unreachable;
+		},
 		.immediate => {
 			store_u64(l.immediate, val);
+		},
+		.literal_pending => {
+			unreachable;
 		},
 		.literal => {
 			return;
@@ -1791,6 +1809,9 @@ pub fn val64(l: Location) RuntimeError!u64 {
 		},
 		.immediate => {
 			return load_u64(l.immediate);
+		},
+		.literal_pending => {
+			unreachable;
 		},
 		.literal => {
 			return l.literal;
@@ -5558,7 +5579,7 @@ pub fn compile_and_load(contents: []u8, addr: u64) void {
 }
 
 pub fn reduce_ternary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location, c: Location) void {
-	if (a == .immediate or a == .literal){
+	if (a == .pending or a == .literal or a == .literal_pending){
 		reduce_binary_suboperator(seed, data, i, b, c);
 	}
 	else if (a == .dereference){
@@ -5567,12 +5588,12 @@ pub fn reduce_ternary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Lo
 }
 
 pub fn reduce_binary_suboperator(seed: u8, data: []u8, i:*u64, a: Location, b:Location) void {
-	if (a == .immediate){
-		if (b == .immediate){
+	if (a == .pending){
+		if (b == .pending){
 			store_u32(data, i.*, seed);
 			i.* += 4;
 		}
-		else if (b == .literal){
+		else if (b == .literal or b == .literal_pending){
 			store_u32(data, i.*, seed+1);
 			i.* += 4;
 		}
@@ -5581,12 +5602,12 @@ pub fn reduce_binary_suboperator(seed: u8, data: []u8, i:*u64, a: Location, b:Lo
 			i.* += 4;
 		}
 	}
-	else if (a == .literal){
-		if (b == .immediate){
+	else if (a == .literal or a == .literal_pending){
+		if (b == .pending){
 			store_u32(data, i.*, seed+3);
 			i.* += 4;
 		}
-		else if (b == .literal){
+		else if (b == .literal or b == .literal_pending){
 			store_u32(data, i.*, seed+4);
 			i.* += 4;
 		}
@@ -5596,11 +5617,11 @@ pub fn reduce_binary_suboperator(seed: u8, data: []u8, i:*u64, a: Location, b:Lo
 		}
 	}
 	else if (a == .dereference){
-		if (b == .immediate){
+		if (b == .pending){
 			store_u32(data, i.*, seed+6);
 			i.* += 4;
 		}
-		else if (b == .literal){
+		else if (b == .literal or b == .literal_pending){
 			store_u32(data, i.*, seed+7);
 			i.* += 4;
 		}
@@ -5612,12 +5633,12 @@ pub fn reduce_binary_suboperator(seed: u8, data: []u8, i:*u64, a: Location, b:Lo
 }
 
 pub fn reduce_binary_operator_extended(seed: u8, data: []u8, i: *u64, a: Location, b: Location) void {
-	if (a == .immediate){
-		if (b == .immediate){
+	if (a == .pending){
+		if (b == .pending){
 			store_u32(data, i.*, seed);
 			i.* += 4;
 		}
-		else if (b == .literal){
+		else if (b == .literal or b == .literal_pending){
 			store_u32(data, i.*, seed+1);
 			i.* += 4;
 		}
@@ -5626,12 +5647,12 @@ pub fn reduce_binary_operator_extended(seed: u8, data: []u8, i: *u64, a: Locatio
 			i.* += 4;
 		}
 	}
-	else if (a == .literal){
-		if (b == .immediate){
+	else if (a == .literal or a == .literal_pending){
+		if (b == .pending){
 			store_u32(data, i.*, seed+3);
 			i.* += 4;
 		}
-		else if (b == .literal){
+		else if (b == .literal or b == .literal_pending){
 			store_u32(data, i.*, seed+4);
 			i.* += 4;
 		}
@@ -5641,11 +5662,11 @@ pub fn reduce_binary_operator_extended(seed: u8, data: []u8, i: *u64, a: Locatio
 		}
 	}
 	else if (a == .dereference){
-		if (b == .immediate){
+		if (b == .pending){
 			store_u32(data, i.*, seed+6);
 			i.* += 4;
 		}
-		else if (b == .literal){
+		else if (b == .literal or b == .literal_pending){
 			store_u32(data, i.*, seed+7);
 			i.* += 4;
 		}
@@ -5657,12 +5678,12 @@ pub fn reduce_binary_operator_extended(seed: u8, data: []u8, i: *u64, a: Locatio
 }
 
 pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location) void {
-	if (a == .immediate or a == .literal){
-		if (b == .immediate){
+	if (a == .pending or a == .literal or a == .literal_pending){
+		if (b == .pending){
 			store_u32(data, i.*, seed);
 			i.* += 4;
 		}
-		else if (b == .literal){
+		else if (b == .literal or b == .literal_pending){
 			store_u32(data, i.*, seed+1);
 			i.* += 4;
 		}
@@ -5672,11 +5693,11 @@ pub fn reduce_binary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Loc
 		}
 	}
 	else if (a == .dereference){
-		if (b == .immediate){
+		if (b == .pending){
 			store_u32(data, i.*, seed+3);
 			i.* += 4;
 		}
-		else if (b == .literal){
+		else if (b == .literal or b == .literal_pending){
 			store_u32(data, i.*, seed+4);
 			i.* += 4;
 		}
@@ -5736,6 +5757,49 @@ pub fn write_location_64(mem: *const std.mem.Allocator, data: []u8, i: *u64, src
 			@memcpy(data[i.*..i.*+8], &bytes);
 			i.* += 8;
 		},
+		.literal_pending => {
+			if (chain.get(src.literal_pending.text)) |*link| {
+				switch(link.*){
+					.fulfilled => {
+						const bytes: [8]u8 = @bitCast(link.fulfilled.value);
+						@memcpy(data[i.*..i.*+8], &bytes);
+						i.* += 8;
+						return;
+					},
+					.pending => {
+						var ptr = link.*;
+						const next = link.pending.next;
+						const insert = LabelChain{
+							.pending=.{
+								.name=src.literal_pending,
+								.location=i.*,
+								.width=8,
+								.next = next
+							}
+						};
+						ptr.pending.next = mem.create(LabelChain)
+							catch unreachable;
+						ptr.pending.next.?.* = insert;
+						chain.put(src.literal_pending.text, ptr)
+							catch unreachable;
+					}
+				}
+			}
+			else{
+				chain.put(src.literal_pending.text, LabelChain{
+					.pending=.{
+						.name=src.literal_pending,
+						.location=i.*,
+						.width=8,
+						.next = null
+					}
+				}) catch unreachable;
+			}
+			const bytes: [8]u8 = @bitCast(hash_global_enum(src.literal_pending));
+			@memcpy(data[i.*..i.*+8], &bytes);
+			i.* += 8;
+
+		},
 		.literal => {
 			const bytes: [8]u8 = @bitCast(src.literal);
 			@memcpy(data[i.*..i.*+8], &bytes);
@@ -5791,6 +5855,46 @@ pub fn write_location(mem: *const std.mem.Allocator, data: []u8, i: *u64, loc: L
 		},
 		.immediate => {
 			store_u32(data, i.*, @truncate(loc.immediate));
+			i.* += 4;
+		},
+		.literal_pending => {
+			if (chain.get(loc.literal_pending.text)) |*link| {
+				switch(link.*){
+					.fulfilled => {
+						store_u32(data, i.*, @truncate(link.fulfilled.value));
+						i.* += 4;
+						return;
+					},
+					.pending => {
+						var ptr = link.*;
+						const next = link.pending.next;
+						const insert = LabelChain{
+							.pending=.{
+								.name=loc.literal_pending,
+								.location=i.*,
+								.width=4,
+								.next = next
+							}
+						};
+						ptr.pending.next = mem.create(LabelChain)
+							catch unreachable;
+						ptr.pending.next.?.* = insert;
+						chain.put(loc.literal_pending.text, ptr)
+							catch unreachable;
+					}
+				}
+			}
+			else{
+				chain.put(loc.literal_pending.text, LabelChain{
+					.pending=.{
+						.name=loc.literal_pending,
+						.location=i.*,
+						.width=4,
+						.next = null
+					}
+				}) catch unreachable;
+			}
+			store_u32(data, i.*, @truncate(hash_global_enum(loc.literal_pending)));
 			i.* += 4;
 		},
 		.literal => {
@@ -5947,4 +6051,5 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	//backtrack
 	//inspect memory address
 //TODO visual code show in debug view
+//TODO replace pending -> identifier
 
