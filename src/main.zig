@@ -699,6 +699,8 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) ParseError!void {
 	var token_map = std.StringHashMap(TOKEN).init(mem.*);
 	token_map.put("comp", .COMP_START) catch unreachable;
+	token_map.put("bind", .BIND) catch unreachable;
+	token_map.put("unbind", .UNBIND) catch unreachable;
 	token_map.put("run", .COMP_END) catch unreachable;
 	token_map.put("pass", .PASS_START) catch unreachable;
 	token_map.put("end", .PASS_END) catch unreachable;
