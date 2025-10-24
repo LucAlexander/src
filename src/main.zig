@@ -30,6 +30,7 @@ var threads: [cores]std.Thread = undefined;
 var thread_mutex = std.Thread.Mutex{};
 var cores_running: u64 = 0; // atomic
 var kill_cores = false;
+var display_frame_buffer = true;
 
 const frame_buffer = frame_buffer_w*frame_buffer_h*pixel_width;
 const mem_size = 0x100000;
@@ -111,6 +112,7 @@ pub fn main() !void {
 		std.debug.print("    -o [filename]  :  compile src program to binary\n", .{});
 		std.debug.print("    -p [filename]  :  compile src program as a plugin\n", .{});
 		std.debug.print("    -i [filename]  :  run compiled src program\n", .{});
+		std.debug.print("    -nd            :  no display\n", .{});
 		return;
 	}
 	var arg_index:u64 = 0;
@@ -156,6 +158,9 @@ pub fn main() !void {
 			expansion_filename = args[arg_index];
 			arg_index += 1;
 			continue;
+		}
+		if (std.mem.eql(u8, arg, "-nd")){
+			display_frame_buffer = false;
 		}
 		if (std.mem.eql(u8, arg, "-c")){
 			run = false;
@@ -1881,7 +1886,9 @@ const OpBytesFn = *const fn (*align(1) u64) bool;
 
 pub fn interpret(start:u64) void {
 	if (!rl.isWindowReady()){
-		rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
+		if (display_frame_buffer){
+			rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
+		}
 	}
 	const ip = &vm.words[vm.ip[active_core]/8];
 	ip.* = start/8;
@@ -5456,6 +5463,9 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 	ip.* += 2;
 	switch (vm.mem[vm.r0[active_core]]){
 		0 => {
+			if (!display_frame_buffer){
+				return true;
+			}
 			const frame_buffer_image = rl.Image{
 				.data=&vm.mem[0],
 				.width=@intCast(vm.fbw),
