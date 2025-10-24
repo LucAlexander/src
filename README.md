@@ -148,6 +148,10 @@ r3: packet length (bytes)
 r0: b
 r1: address to dump network addresses
 r2 <- number of addresses found
+
+r0: c
+r1: address to read message into
+r2 <- length of message 
 ```
 
 ## Builtin Symbols

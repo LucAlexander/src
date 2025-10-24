@@ -39,6 +39,8 @@ const register_section = word_size*6*cores;
 const start_ip = frame_buffer;
 const total_mem_size = main_size+register_section;
 
+var ip_addr: ?[]u8 = undefined;
+
 const VM = struct {
 	mem: []u8,
 	words: []align(1) u64,
@@ -173,7 +175,9 @@ pub fn main() !void {
 			threads[thread_index] = std.Thread.spawn(.{}, core_worker, .{thread_index}) catch unreachable;
 			thread_index += 1;
 		}
+		ip_addr = file_networking_startup(&allocator);
 		run_file(infile);
+		file_networking_cleanup(ip_addr);
 		thread_index = 0;
 		while (thread_index < threads.len){
 			threads[thread_index].join();
@@ -187,7 +191,7 @@ pub fn main() !void {
 			threads[thread_index] = std.Thread.spawn(.{}, core_worker, .{thread_index}) catch unreachable;
 			thread_index += 1;
 		}
-		const ip_addr = file_networking_startup(&allocator);
+		ip_addr = file_networking_startup(&allocator);
 		compile(name, output_filename, expansion_filename, run);
 		file_networking_cleanup(ip_addr);
 		thread_index = 0;
@@ -225,12 +229,14 @@ pub fn file_networking_startup(mem: *const std.mem.Allocator) []u8 {
 	return slice;
 }
 
-pub fn file_networking_cleanup(name: []u8) void {
-	const cwd = std.fs.cwd();
-	cwd.makeDir("machines") catch {};
-	var dir = cwd.openDir("machines", .{.iterate=true}) catch unreachable;
-	defer dir.close();
-	dir.deleteDir(name) catch {};
+pub fn file_networking_cleanup(name: ?[]u8) void {
+	if (name) |addr| {
+		const cwd = std.fs.cwd();
+		cwd.makeDir("machines") catch {};
+		var dir = cwd.openDir("machines", .{.iterate=true}) catch unreachable;
+		defer dir.close();
+		dir.deleteDir(addr) catch {};
+	}
 }
 
 pub fn core_worker(index: u64) void {
@@ -5638,6 +5644,44 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 				}
 			}
 			vm.words[vm.r2[active_core] >> 3] = count;
+		},
+		12 => {
+			const cwd = std.fs.cwd();
+			const address = vm.words[vm.r1[active_core] >> 3];
+			cwd.makeDir("machines") catch {};
+			var dir = cwd.openDir("machines", .{.iterate=true}) catch unreachable;
+			defer dir.close();
+			var it = dir.iterate();
+			while (it.next() catch unreachable) |entry| {
+				switch (entry.kind){
+					.directory => {
+						const candidate = std.fmt.parseInt(u64, entry.name, 16) catch unreachable;
+						if (candidate != address){
+							continue;
+						}
+						var me = dir.openDir(entry.name, .{.iterate=true}) catch unreachable;
+						defer me.close();
+						var meit = dir.iterate();
+						while (meit.next() catch unreachable) |meentry| {
+							std.debug.assert(entry.kind == .file);
+							const packet = me.openFile(meentry.name, .{}) catch unreachable;
+							defer packet.close();
+							const stat = packet.stat() catch unreachable;
+							const allocator = std.heap.page_allocator;
+							const contents = packet.readToEndAlloc(allocator, stat.size+1) catch unreachable;
+							defer allocator.free(contents);
+							for (contents, 0..) |byte, i| {
+								vm.mem[address+i] = byte;
+							}
+							vm.words[vm.r2[active_core]>>3] = contents.len;
+							break;
+						}
+						break;
+					},
+					.file => {},
+					else => {}
+				}
+			}
 		},
 		else => { }
 	}
