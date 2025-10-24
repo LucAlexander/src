@@ -36,68 +36,70 @@ const mem_size = 0x100000;
 const main_size = mem_size+frame_buffer;
 const register_section = word_size*6*cores;
 const start_ip = frame_buffer;
-const total_mem_size = frame_buffer+mem_size+register_section;
+const total_mem_size = main_size+register_section;
 
 const VM = struct {
-	mem: [total_mem_size]u8,
+	mem: []u8,
 	words: []align(1) u64,
 	half_words: []align(1) u32,
-	r0: [cores]u64,
-	r1: [cores]u64,
-	r2: [cores]u64,
-	r3: [cores]u64,
-	sr: [cores]u64,
-	ip: [cores]u64,
+	r0: []u64,
+	r1: []u64,
+	r2: []u64,
+	r3: []u64,
+	sr: []u64,
+	ip: []u64,
+	fbw: u64,
+	fbh: u64,
 	
-	pub fn init() VM {
+	pub fn init(mem: *const std.mem.Allocator, fbw: u64, fbh: u64, size: u64, core_count: u64) VM {
+		const main_fb_size = size + (fbh*fbw*pixel_width);
+		const total_size = main_fb_size+(core_count*word_size*6);
 		var mach = VM{
-			.mem=undefined,
+			.mem=mem.alloc(u8, total_size) catch unreachable,
 			.words=undefined,
 			.half_words=undefined,
-			.r0=undefined,
-			.r1=undefined,
-			.r2=undefined,
-			.r3=undefined,
-			.sr=undefined,
-			.ip=undefined,
+			.r0=mem.alloc(u64, core_count) catch unreachable,
+			.r1=mem.alloc(u64, core_count) catch unreachable,
+			.r2=mem.alloc(u64, core_count) catch unreachable,
+			.r3=mem.alloc(u64, core_count) catch unreachable,
+			.sr=mem.alloc(u64, core_count) catch unreachable,
+			.ip=mem.alloc(u64, core_count) catch unreachable,
+			.fbw=fbw,
+			.fbh=fbh
 		};
+		for (mach.mem) |*byte| {
+			byte.* = 0;
+		}
 		var offset:u64 = 0;
-		for (0..cores) |i| {
-			mach.r0[i] = main_size+offset*8;
+		for (0..core_count) |i| {
+			mach.r0[i] = main_fb_size+offset*word_size;
 			offset += 1;
-			mach.r1[i] = main_size+offset*8;
+			mach.r1[i] = main_fb_size+offset*word_size;
 			offset += 1;
-			mach.r2[i] = main_size+offset*8;
+			mach.r2[i] = main_fb_size+offset*word_size;
 			offset += 1;
-			mach.r3[i] = main_size+offset*8;
+			mach.r3[i] = main_fb_size+offset*word_size;
 			offset += 1;
-			mach.sr[i] = main_size+offset*8;
+			mach.sr[i] = main_fb_size+offset*word_size;
 			offset += 1;
-			mach.ip[i] = main_size+offset*8;
+			mach.ip[i] = main_fb_size+offset*word_size;
 			offset += 1;
 		}
+		mach.words = std.mem.bytesAsSlice(u64, mach.mem[0..]);
+		mach.half_words = std.mem.bytesAsSlice(u32, mach.mem[0..]);
 		return mach;
 	}
 };
 
-var vm: VM = VM.init();
-var pass_vm: VM = VM.init();
-
-var frame_buffer_image = rl.Image{
-	.data=&vm.mem[0],
-	.width=frame_buffer_w,
-	.height=frame_buffer_h,
-	.mipmaps=1,
-	.format=rl.PixelFormat.uncompressed_r8g8b8a8
-};
-
-var frame_buffer_texture:rl.Texture = undefined;
+var vm: VM = undefined;
+var pass_vm: VM = undefined;
 
 pub fn main() !void {
-	partition_vm();
+	const allocator = std.heap.page_allocator;
+	vm = VM.init(&allocator, frame_buffer_w, frame_buffer_h, mem_size, cores);
+	pass_vm = VM.init(&allocator, frame_buffer_w, frame_buffer_h, mem_size, cores);
 	push_builtin_constants();
 	std.debug.assert(total_mem_size % 8 == 0);
-	const allocator = std.heap.page_allocator;
 	const args = try std.process.argsAlloc(allocator);
 	if (std.mem.eql(u8, args[1], "-h")){
 		std.debug.print("Help Menu\n", .{});
@@ -287,7 +289,7 @@ pub fn push_builtin_constants() void {
 	persistent.put("r2", main_size+offset) catch unreachable;
 	offset += 8;
 	persistent.put("r3", main_size+offset) catch unreachable;
-persistent.put("mbm", frame_buffer) catch unreachable;
+	persistent.put("mbm", frame_buffer) catch unreachable;
 	persistent.put("fbw", frame_buffer_w) catch unreachable;
 	persistent.put("fbh", frame_buffer_h) catch unreachable;
 	persistent.put("mtp", main_size) catch unreachable;
@@ -389,11 +391,6 @@ pub fn run_file(infilename: []u8) void {
 	for (contents, 0..) |byte, i| {
 		vm.mem[start_ip+i] = byte;
 	}
-	rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
-	frame_buffer_texture = rl.loadTextureFromImage(frame_buffer_image) catch {
-		std.debug.print("Error creating texture\n", .{});
-		return;
-	};
 	const core = awaken_core(start_ip);
 	std.debug.assert(core != 0);
 	await_cores();
@@ -452,14 +449,13 @@ pub fn metaprogram(tokens: *Buffer(Token), mem: *const std.mem.Allocator, run: b
 		}
 		return null;
 	}
-	var runtime = VM.init();
+	var runtime = VM.init(mem, frame_buffer_w, frame_buffer_h, mem_size, cores);
 	const program_len = parse_bytecode(mem, runtime.mem[start_ip..], &new_stream, &index, false) catch |err| {
 		std.debug.print("Bytecode Parse Error {}\n", .{err});
 		report_error(token_stream.*, new_stream);
 		return null;
 	};
 	vm = runtime;
-	partition_vm();
 	if (run){
 		if (debug){
 			std.debug.print("program length: {}\n", .{program_len});
@@ -1877,15 +1873,9 @@ const Opcode = enum(u8) {
 
 const OpBytesFn = *const fn (*align(1) u64) bool;
 
-pub fn partition_vm() void {
-	vm.words = std.mem.bytesAsSlice(u64, vm.mem[0..]);
-	vm.half_words = std.mem.bytesAsSlice(u32, vm.mem[0..]);
-}
-
 pub fn interpret(start:u64) void {
 	if (!rl.isWindowReady()){
 		rl.initWindow(frame_buffer_w, frame_buffer_h, "src");
-		frame_buffer_texture = rl.loadTextureFromImage(frame_buffer_image) catch unreachable;
 	}
 	const ip = &vm.words[vm.ip[active_core]/8];
 	ip.* = start/8;
@@ -5460,6 +5450,14 @@ pub fn int_bytes(ip: *align(1) u64) bool {
 	ip.* += 2;
 	switch (vm.mem[vm.r0[active_core]]){
 		0 => {
+			const frame_buffer_image = rl.Image{
+				.data=&vm.mem[0],
+				.width=@intCast(vm.fbw),
+				.height=@intCast(vm.fbh),
+				.mipmaps=1,
+				.format=rl.PixelFormat.uncompressed_r8g8b8a8
+			};
+			const frame_buffer_texture = rl.loadTextureFromImage(frame_buffer_image) catch unreachable;
 			rl.updateTexture(frame_buffer_texture, &vm.mem[0]);
 			rl.beginDrawing();
 			rl.drawTexture(frame_buffer_texture, 0, 0, .white);
@@ -5542,8 +5540,7 @@ pub fn compile_and_load(contents: []u8, addr: u64) void {
 		std.debug.print("initial------------------------------\n", .{});
 	}
 	var old = vm;
-	vm = VM.init();
-	partition_vm();
+	vm = VM.init(&mem, frame_buffer_w, frame_buffer_h, mem_size, cores);
 	const program_len = metaprogram(&tokens, &mem, false, null);
 	if (program_len) |len| {
 		for (addr..addr+len, vm.mem[start_ip..]) |index, byte| {
@@ -5551,7 +5548,6 @@ pub fn compile_and_load(contents: []u8, addr: u64) void {
 		}
 	}
 	vm = old;
-	partition_vm();
 }
 
 pub fn reduce_ternary_operator(seed: u8, data: []u8, i: *u64, a: Location, b: Location, c: Location) void {
@@ -5938,7 +5934,6 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			}
 			const old_vm = vm;
 			vm = pass_vm;
-			partition_vm();
 			comp_section = true;
 			const core = awaken_core(start_ip);
 			std.debug.assert(core != 0);
@@ -6005,7 +6000,6 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 					catch unreachable;
 			}
 			vm = old_vm;
-			partition_vm();
 			new.appendSlice(translated.items)
 				catch unreachable;
 			const tmp = tokens;
