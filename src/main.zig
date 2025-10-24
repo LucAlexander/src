@@ -1643,15 +1643,6 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 				token = tokens.items[token_index.*];
 				token_index.* += 1;
 			}
-			if (token.tag != .IDENTIFIER) {
-				if (token.tag == .WHITESPACE or token.tag == .LINE_END){
-					return Location {
-						.literal_pending = token
-					};
-				}
-				set_error(token_index.*-1, token, "Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
-				return ParseError.UnexpectedToken;
-			}
 			return Location{
 				.literal_pending = token
 			};
@@ -1699,10 +1690,6 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 			while (token.tag == .SPACE or token.tag == .TAB or token.tag == .NEW_LINE){
 				token = tokens.items[token_index.*];
 				token_index.* += 1;
-			}
-			if (token.tag != .IDENTIFIER) {
-				set_error(token_index.*-1, token, "Expected indentifier to serve as immediate value, found {s}\n", .{token.text});
-				return ParseError.UnexpectedToken;
 			}
 			return Location{
 				.literal = hash_global_enum(token)
@@ -6168,6 +6155,7 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			token_index = 0;
 			new = tmp;
 			new.clearRetainingCapacity();
+			try retokenize(mem, &tokens);
 			continue;
 		}
 		new.append(token)
