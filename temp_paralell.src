@@ -1,0 +1,123 @@
+comp
+	mul r1 !6 !8
+	mul r2 r1 !2
+	mul r3 r1 !3
+	add 0  !r0 r1
+	add 8  !r1 r1
+	add 10 !r2 r1
+	add 18 !r3 r1
+	add 20 !r0 r2
+	add 28 !r1 r2
+	add 30 !r2 r2
+	add 38 !r3 r2
+	add 40 !r0 r3
+	add 48 !r1 r3
+	add 50 !r2 r3
+	add 58 !r3 r3
+	mov r0 !1
+	int
+run
+bind r01 0
+bind r11 8
+bind r21 10
+bind r31 18
+bind r02 20
+bind r12 28
+bind r22 30
+bind r32 38
+bind r03 40
+bind r13 48
+bind r23 50
+bind r33 58
+bind save_r0 !r0
+bind save_r1 !r1
+bind save_r2 !r2
+bind save_r3 !r3
+
+mov r0 !9
+mov r1 !core1
+int
+mov r0 !9
+mov r1 !core2
+int
+mov r0 !9
+mov r1 !core3
+int
+jmp !core0
+
+bind core0 ip
+	mov r1 !mbm
+	div r1 r1 !4
+	mov r2 !0
+	bind loop ip
+		mov r0 !0
+		int
+		mov r0 r2
+		bind inner ip
+			cmp r0 r1
+			jge !loop
+			movw [r0] !ff808080ff808080
+			add r0 r0 !8
+			jmp !inner
+	unbind loop
+	unbind inner
+
+bind core1 ip
+	bind r0 !r01
+	bind r1 !r11
+	bind r2 !r21
+	bind r3 !r31
+	mov r1 !mbm
+	div r1 r1 !4
+	mov r2 r1
+	mul r1 r1 !2
+	bind loop ip
+		mov r0 r2
+		bind inner ip
+			cmp r0 r1
+			jge !loop
+			movw [r0] !ff808080ff808080
+			add r0 r0 !8
+			jmp !inner
+	unbind loop
+	unbind inner
+
+bind core2 ip
+	bind r0 !r02
+	bind r1 !r12
+	bind r2 !r22
+	bind r3 !r32
+	mov r1 !mbm
+	div r1 r1 !4
+	mul r2 r1 !2
+	mul r1 r1 !3
+	bind loop ip
+		mov r0 r2
+		bind inner ip
+			cmp r0 r1
+			jge !loop
+			movw [r0] !ff808080ff808080
+			add r0 r0 !8
+			jmp !inner
+	unbind loop
+	unbind inner
+
+bind core3 ip
+	bind r0 !r03
+	bind r1 !r13
+	bind r2 !r23
+	bind r3 !r33
+	mov r1 !mbm
+	div r1 r1 !4
+	mul r2 r1 !3
+	mov r1 !mbm
+	bind loop ip
+		mov r0 r2
+		bind inner ip
+			cmp r0 r1
+			jge !loop
+			movw [r0] !ff808080ff808080
+			add r0 r0 !8
+			jmp !inner
+	unbind loop
+	unbind inner
