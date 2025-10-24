@@ -5,24 +5,24 @@ bind continue ip
 	mov r2 r0
 	movw r3 !/
 	cmp [r0] r3
-	jne append
+	jne !append
 	add r0 r0 !8
 	cmp [r0] r3
-	jne append
+	jne !append
 	bind inner ip
 		add r0 r0 !8
 		movw r3 !\
 		cmp [r0] r3
-		jne inner 
+		jne !inner 
 		add r0 r0 !8
-		jmp continue 
+		jmp !continue 
 	bind append ip
 	mov r0 r2
 	mov [r1] [r0]
 	add r1 r1 !8
 	add r0 r0 !8
 	cmp r0 0
-	jlt continue
+	jlt !continue
 bind break ip
 mov r0 !1
 int	

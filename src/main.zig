@@ -803,7 +803,7 @@ pub fn to_byte_token_slice(mem: *const std.mem.Allocator, c: u8) []u8 {
 
 pub fn mk_token_from_u64(mem: *const std.mem.Allocator, val: u64) Token {
 	const buf = mem.alloc(u8, 20) catch unreachable;
-	const slice = std.fmt.bufPrint(buf, "{}", .{val}) catch unreachable;
+	const slice = std.fmt.bufPrint(buf, "{x}", .{val}) catch unreachable;
 	return Token{
 		.tag=.IDENTIFIER,
 		.text=slice,
@@ -1162,6 +1162,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 						catch unreachable;
 					persistent.put(name.text, val)
 						catch unreachable;
+					iden_hashes.put(name.text, current_iden)
+						catch unreachable;
+					current_iden += 1;
 				}
 				else{
 					if (debug){
@@ -1169,6 +1172,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					}
 					persistent.put(name.text, val)
 						catch unreachable;
+					iden_hashes.put(name.text, current_iden)
+						catch unreachable;
+					current_iden += 1;
 				}
 				continue;
 			},
@@ -5946,7 +5952,7 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			var translated = Buffer(Token).init(mem.*);
 			var word_index = dest_addr/8;
 			var it = iden_hashes.iterator();
-			var lookup: []Token = mem.alloc(Token, current_iden-0x0000000100000000) catch unreachable;
+			var lookup: []Token = mem.alloc(Token, current_iden-0x100000000) catch unreachable;
 			while (it.next()) |ptr| {
 				var copy = mem.alloc(u8, ptr.key_ptr.len) catch unreachable;
 				for (0..copy.len) |i| {
