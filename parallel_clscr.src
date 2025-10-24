@@ -182,6 +182,9 @@ bind worker ip
 			movw [r0] !ff808080ff808080
 			add r0 r0 !8
 			jmp inner
+	unbind loop
+	unbind skip
+	unbind inner
 core_agnostic
 
 bind one ip
