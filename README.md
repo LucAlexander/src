@@ -1,7 +1,7 @@
 # Src
 
 <p align="center">
-    <img src="https://github.com/LucAlexander/ink/blob/master/logo.png?raw=true" alt="logo">
+    <img src="https://github.com/LucAlexander/src/blob/master/logo.png?raw=true" alt="logo">
 </p>
 
 
