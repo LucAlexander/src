@@ -1639,10 +1639,6 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 			token_index.* += 1;
 			token = tokens.items[token_index.*];
 			token_index.* += 1;
-			while (token.tag == .SPACE or token.tag == .TAB or token.tag == .NEW_LINE){
-				token = tokens.items[token_index.*];
-				token_index.* += 1;
-			}
 			return Location{
 				.literal_pending = token
 			};
@@ -1687,10 +1683,6 @@ pub fn parse_location(mem: *const std.mem.Allocator, tokens: *const Buffer(Token
 			token_index.* += 1;
 			token = tokens.items[token_index.*];
 			token_index.* += 1;
-			while (token.tag == .SPACE or token.tag == .TAB or token.tag == .NEW_LINE){
-				token = tokens.items[token_index.*];
-				token_index.* += 1;
-			}
 			return Location{
 				.literal = hash_global_enum(token)
 			};
@@ -6043,6 +6035,9 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	tokens.appendSlice(input.items)
 		catch unreachable;
 	while (token_index < tokens.items.len){
+		if (debug){
+			show_tokens(tokens);
+		}
 		const token = tokens.items[token_index];
 		token_index += 1;
 		if (token.tag == .PASS_START){
