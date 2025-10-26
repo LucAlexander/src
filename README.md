@@ -7,7 +7,7 @@
 
 Check the included src files in the repository for examples, some of them are older as the system has gone through a few phases of iteration. These docs are minimal and will improve as the spec solidifies.
 
-Source is a metacomputation tool. It can serve as a standalone virtual computer, but can be used as a plugin manager for basically any base language. You define syntactic mutations to your file in a well defined language of computation close to how real computation happens on real machines, and can then define semantic state for those syntactic constructs in the same language. A runtime language exists alonside the compile time system, of course also in the same language. True unbounded freedom, allowing absolute precision. Ever want assembly with a proof engine tacked on? Now you can make it. 
+Source is a metacomputation tool. It can serve as a standalone virtual computer, but can be used as a plugin manager for basically any base language. You define syntactic mutations to your file in a well defined language close to how real computation happens on real machines, but a little more abstract. You can then define semantic state for those syntactic constructs in the same language. A runtime environment exists alongside the compile time environment, of course also in the same language, which can be used to write any real software you want, but this tool is mainly meant to build headless extensions that can be tacked onto base languages. True unbounded freedom, allowing absolute precision. Ever want assembly with a proof engine tacked on? Now you can make it. 
 
 You can run multiple instances of source computers in the same directory and have them communicate over an emulated network via file io.
 
