@@ -696,7 +696,7 @@ pub fn tokenize(mem: *const std.mem.Allocator, text: []u8) Buffer(Token) {
 	return tokens;
 }
 
-pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) ParseError!void {
+pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) ParseError!Buffer(Token) {
 	var token_map = std.StringHashMap(TOKEN).init(mem.*);
 	token_map.put("comp", .COMP_START) catch unreachable;
 	token_map.put("bind", .BIND) catch unreachable;
@@ -733,11 +733,16 @@ pub fn retokenize(mem: *const std.mem.Allocator, tokens: *const Buffer(Token)) P
 	token_map.put("!", .LIT) catch unreachable;
 	token_map.put("[", .OPEN_BRACK) catch unreachable;
 	token_map.put("]", .CLOSE_BRACK) catch unreachable;
+	var new = Buffer(Token).init(mem.*);
 	for (tokens.items) |*token| {
+		var copy = token.*;
 		if (token_map.get(token.text)) |tag| {
-			token.tag = tag;
+			copy.tag = tag;
 		}
+		new.append(copy)
+			catch unreachable;
 	}
+	return new;
 }
 
 pub fn show_tokens(tokens: Buffer(Token)) void {
@@ -849,7 +854,7 @@ pub fn to_byte_token_slice(mem: *const std.mem.Allocator, c: u8) []u8 {
 }
 
 pub fn mk_token_from_u64(mem: *const std.mem.Allocator, val: u64) Token {
-	const buf = mem.alloc(u8, 20) catch unreachable;
+	const buf = mem.alloc(u8, 32) catch unreachable;
 	const slice = std.fmt.bufPrint(buf, "{x}", .{val}) catch unreachable;
 	return Token{
 		.tag=.IDENTIFIER,
@@ -939,8 +944,8 @@ const Instruction = struct {
 	tag: Opcode
 };
 
-pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!Buffer(Token) {
-	try retokenize(mem, tokens);
+pub fn parse_plugin(mem: *const std.mem.Allocator, input_tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!Buffer(Token) {
+	const tokens = try retokenize(mem, input_tokens);
 	var output = Buffer(Token).init(mem.*);
 	while (token_index.* < tokens.items.len){
 		skip_whitespace(tokens.items, token_index) catch {
@@ -959,7 +964,7 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				if (debug){
 					std.debug.print("Entering comp segment\n", .{});
 				}
-				_ = try parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], tokens, token_index, true);
+				_ = try parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], &tokens, token_index, true);
 				if (debug){
 					std.debug.print("Parsed comp segment\n", .{});
 				}
@@ -1018,7 +1023,7 @@ pub fn parse_plugin(mem: *const std.mem.Allocator, tokens: *const Buffer(Token),
 				};
 				const comp_stack = comp_section;
 				comp_section = true;
-				const loc = try parse_location(mem, tokens, token_index);
+				const loc = try parse_location(mem, &tokens, token_index);
 				comp_section = comp_stack;
 				const val = val64(loc) catch {
 					return ParseError.UnexpectedToken;
@@ -1070,8 +1075,8 @@ const LabelChain = union(enum){
 	}
 };
 
-pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!u64 {
-	try retokenize(mem, tokens);
+pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, input_tokens: *const Buffer(Token), token_index: *u64, comp: bool) ParseError!u64 {
+	const tokens = try retokenize(mem, input_tokens);
 	var labels = std.StringHashMap(u64).init(mem.*);
 	defer labels.deinit();
 	var chain = std.StringHashMap(LabelChain).init(mem.*);
@@ -1095,7 +1100,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				if (debug) {
 					std.debug.print("Entering comp segment\n", .{});
 				}
-				_ = try parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], tokens, token_index, true);
+				_ = try parse_bytecode(mem, vm.mem[frame_buffer..vm.mem.len], &tokens, token_index, true);
 				if (debug) {
 					std.debug.print("Parsed comp segment\n", .{});
 				}
@@ -1196,7 +1201,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 				}
 				const comp_stack = comp_section;
 				comp_section = true;
-				const loc = try parse_location(mem, tokens, token_index);
+				const loc = try parse_location(mem, &tokens, token_index);
 				comp_section = comp_stack;
 				const val = val64(loc) catch {
 					return ParseError.UnexpectedToken;
@@ -1230,8 +1235,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.mov_ii,
 					.data=.{
 						.move=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.src=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1241,8 +1246,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.movw_i,
 					.data=.{
 						.movew=.{
-							.dest = try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.src = try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest = try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.src = try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1252,8 +1257,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.movh_ii,
 					.data=.{
 						.move=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.src=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1263,8 +1268,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.movl_ii,
 					.data=.{
 						.move=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.src=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.src=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1274,9 +1279,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.add_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1286,9 +1291,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.sub_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1298,9 +1303,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.mul_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1310,9 +1315,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.div_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1322,9 +1327,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.mod_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1334,9 +1339,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.and_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1346,9 +1351,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.xor_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1358,9 +1363,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.or_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1370,9 +1375,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.shl_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1382,9 +1387,9 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.shr_iii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1394,8 +1399,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.not_ii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
 							.right=Location{.literal=0}
 						}
 					}
@@ -1406,8 +1411,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.com_ii,
 					.data=.{
 						.alu=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
 							.right=Location{.literal=0}
 						}
 					}
@@ -1418,8 +1423,8 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.cmp_ii,
 					.data=.{
 						.compare=.{
-							.left=try parse_location_or_label(mem, tokens, token_index, labels, false),
-							.right=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.left=try parse_location_or_label(mem, &tokens, token_index, labels, false),
+							.right=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1429,7 +1434,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.jmp_i,
 					.data=.{
 						.jump=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1439,7 +1444,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.jne_i,
 					.data=.{
 						.jump=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1449,7 +1454,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.jeq_i,
 					.data=.{
 						.jump=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1459,7 +1464,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.jle_i,
 					.data=.{
 						.jump=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1469,7 +1474,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.jlt_i,
 					.data=.{
 						.jump=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1479,7 +1484,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.jge_i,
 					.data=.{
 						.jump=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -1489,7 +1494,7 @@ pub fn parse_bytecode(mem: *const std.mem.Allocator, data: []u8, tokens: *const 
 					.tag=.jgt_i,
 					.data=.{
 						.jump=.{
-							.dest=try parse_location_or_label(mem, tokens, token_index, labels, false)
+							.dest=try parse_location_or_label(mem, &tokens, token_index, labels, false)
 						}
 					}
 				};
@@ -6035,14 +6040,14 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	tokens.appendSlice(input.items)
 		catch unreachable;
 	while (token_index < tokens.items.len){
-		if (debug){
-			show_tokens(tokens);
-		}
 		const token = tokens.items[token_index];
 		token_index += 1;
 		if (token.tag == .PASS_START){
 			const start = token_index;
 			var end = start;
+			if (debug){
+				show_tokens(tokens);
+			}
 			while (token_index < tokens.items.len){
 				const inner = tokens.items[token_index];
 				if (inner.tag == .PASS_END){
@@ -6053,6 +6058,7 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 				token_index += 1;
 			}
 			iden_hashes.clearRetainingCapacity();
+			current_iden = 0x100000000;
 			var index:u64 = 0;
 			var slice = Buffer(Token).init(mem.*);
 			slice.appendSlice(tokens.items[start..end])
@@ -6091,11 +6097,12 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			var it = iden_hashes.iterator();
 			var lookup: []Token = mem.alloc(Token, current_iden-0x100000000) catch unreachable;
 			while (it.next()) |ptr| {
-				var copy = mem.alloc(u8, ptr.key_ptr.len) catch unreachable;
-				for (0..copy.len) |i| {
-					copy[i] = ptr.key_ptr.*[i];
-				}
 				if (ptr.value_ptr.* > 0xFFFFFFFF){
+					var copy = mem.alloc(u8, ptr.key_ptr.len) catch unreachable;
+					for (0..copy.len) |i| {
+						copy[i] = ptr.key_ptr.*[i];
+					}
+					std.debug.assert(ptr.value_ptr.*-0x100000000 < lookup.len);
 					if (std.mem.eql(u8, copy, " ")){
 						lookup[ptr.value_ptr.*-0x100000000] = Token{
 							.tag=.SPACE,
@@ -6134,6 +6141,7 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 				const enumeration = vm.words[word_index];
 				word_index += 1;
 				if (enumeration > 0xFFFFFFFF){
+					std.debug.assert(enumeration-0x100000000 < lookup.len);
 					const inst = lookup[enumeration-0x100000000];
 					translated.append(inst)
 						catch unreachable;
@@ -6150,7 +6158,7 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			token_index = 0;
 			new = tmp;
 			new.clearRetainingCapacity();
-			try retokenize(mem, &tokens);
+			tokens = try retokenize(mem, &tokens);
 			continue;
 		}
 		new.append(token)
@@ -6165,4 +6173,5 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 	//backtrack
 	//inspect memory address
 //TODO visual code show in debug view
+
 
