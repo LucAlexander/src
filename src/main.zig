@@ -1642,6 +1642,10 @@ pub fn parse_location_or_label(mem: *const std.mem.Allocator, tokens: *const Buf
 		},
 		.LIT => {
 			token_index.* += 1;
+			if (token_index.* >= tokens.items.len){
+				set_error(token_index.*-1, token, "File ended while parsing literal\n", .{});
+				return ParseError.UnexpectedEOF;
+			}
 			token = tokens.items[token_index.*];
 			token_index.* += 1;
 			return Location{
