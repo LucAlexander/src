@@ -6052,17 +6052,24 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 			if (debug){
 				show_tokens(tokens);
 			}
+			var depth: u64 = 0;
 			while (token_index < tokens.items.len){
 				const inner = tokens.items[token_index];
-				if (inner.tag == .PASS_END){
-					end = token_index;
-					token_index += 1;
-					break;
+				if (inner.tag == .PASS_START){
+					depth += 1;
+				}
+				else if (inner.tag == .PASS_END){
+					if (depth == 0){
+						end = token_index;
+						token_index += 1;
+						break;
+					}
+					depth -= 1;
 				}
 				token_index += 1;
 			}
-			iden_hashes.clearRetainingCapacity();
-			current_iden = 0x100000000;
+			//iden_hashes.clearRetainingCapacity();
+			//current_iden = 0x100000000;
 			var index:u64 = 0;
 			var slice = Buffer(Token).init(mem.*);
 			slice.appendSlice(tokens.items[start..end])
@@ -6167,6 +6174,9 @@ pub fn parse_pass(mem: *const std.mem.Allocator, input: Buffer(Token)) ParseErro
 		}
 		new.append(token)
 			catch unreachable;
+	}
+	if (debug){
+		show_tokens(new);
 	}
 	return new;
 }
